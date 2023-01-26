@@ -590,7 +590,8 @@ class NuScenesDataset(Custom3DDataset):
         dair_root = "data/dair-v2x"
         gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")            
         pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
-        kitti_evaluation(pred_label_path, gt_label_path)
+        mAP_3d_moderate, result = kitti_evaluation(pred_label_path, gt_label_path)
+        print("result: ", result)
         if tmp_dir is not None:
             tmp_dir.cleanup()
 

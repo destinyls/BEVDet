@@ -25,7 +25,7 @@ def kitti_evaluation(pred_label_path, gt_label_path, metric_path="metric"):
     with open(os.path.join(metric_path, "R40", 'epoch_result_{}.txt'.format(round(mAP_3d_moderate, 2))), "w") as f:
         f.write(result)
     print(result)
-    return mAP_3d_moderate
+    return mAP_3d_moderate, result
 
 def write_kitti_in_txt(pred_lines, path_txt):
     wf = open(path_txt, "w")

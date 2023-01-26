@@ -135,14 +135,19 @@ file_client_args = dict(backend='disk')
 
 train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles_BEVDet', is_train=True, data_config=data_config),
-    dict(
-        type='LoadPointsFromFile',
-        dummy=True,
-        coord_type='LIDAR',
-        load_dim=4,
-        use_dim=4,
-        file_client_args=file_client_args),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
+    dict(
+        type='GlobalRotScaleTrans',
+        rot_range=[-0.0, 0.0],
+        scale_ratio_range=[1.0, 1.0],
+        translation_std=[0, 0, 0],
+        update_img2lidar=True),
+    dict(
+        type='RandomFlip3D',
+        sync_2d=False,
+        flip_ratio_bev_horizontal=0.0,
+        flip_ratio_bev_vertical=0.0,
+        update_img2lidar=True),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
@@ -165,8 +170,18 @@ test_pipeline = [
         load_dim=4,
         use_dim=4,
         file_client_args=file_client_args),
-        dict(type='DefaultFormatBundle3D', class_names=class_names, with_label=False),
-        dict(type='Collect3D', keys=['points','img_inputs'])
+    dict(
+        type='MultiScaleFlipAug3D',
+        img_scale=(1333, 800),
+        pts_scale_ratio=1,
+        flip=False,
+        transforms=[
+            dict(
+                type='DefaultFormatBundle3D',
+                class_names=class_names,
+                with_label=False),
+            dict(type='Collect3D', keys=['points','img_inputs'])
+        ])
 ]
 # construct a pipeline for data and gt loading in show function
 # please keep its loading function consistent with test_pipeline (e.g. client)
@@ -188,7 +203,7 @@ input_modality = dict(
 
 data = dict(
     samples_per_gpu=8,
-    workers_per_gpu=8,
+    workers_per_gpu=16,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
@@ -220,5 +235,6 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=0.001,
     step=[16, 22])
+evaluation = dict(interval=1)
 checkpoint_config = dict(interval=1)
-runner = dict(type='EpochBasedRunner', max_epochs=50)
+runner = dict(type='EpochBasedRunner', max_epochs=80)
