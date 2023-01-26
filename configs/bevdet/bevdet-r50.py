@@ -5,7 +5,7 @@ _base_ = ['../_base_/datasets/nus-3d.py',
 # Global
 # If point cloud range is changed, the models should also change their point
 # cloud range accordingly
-point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+point_cloud_range = [0.0, -51.2, -5.0, 102.4, 51.2, 3.0]
 # For nuScenes we usually do 10-class detection
 class_names = [
     'car', 'truck', 'construction_vehicle', 'bus', 'trailer', 'barrier',
@@ -13,26 +13,25 @@ class_names = [
 ]
 
 data_config={
-    'cams': ['CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT',
-             'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT'],
-    'Ncams': 6,
-    'input_size': (256, 704),
-    'src_size': (900, 1600),
+    'cams': ['CAM_FRONT'],
+    'Ncams': 1,
+    'input_size': (864, 1536),
+    'src_size': (1080, 1920),
 
     # Augmentation
-    'resize': (-0.06, 0.11),
-    'rot': (-5.4, 5.4),
-    'flip': True,
+    'resize': (-0.00, 0.00),
+    'rot': (0.0, 0.0),
+    'flip': False,
     'crop_h': (0.0, 0.0),
-    'resize_test':0.04,
+    'resize_test':0.00,
 }
 
 # Model
 grid_config={
-        'xbound': [-51.2, 51.2, 0.8],
+        'xbound': [0.0, 102.4, 0.8],
         'ybound': [-51.2, 51.2, 0.8],
         'zbound': [-10.0, 10.0, 20.0],
-        'dbound': [1.0, 60.0, 1.0],}
+        'dbound': [1.0, 120.0, 1.0],}
 
 voxel_size = [0.1, 0.1, 0.2]
 
@@ -83,7 +82,7 @@ model = dict(
         bbox_coder=dict(
             type='CenterPointBBoxCoder',
             pc_range=point_cloud_range[:2],
-            post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+            post_center_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
             max_num=500,
             score_threshold=0.1,
             out_size_factor=8,
@@ -109,7 +108,7 @@ model = dict(
     test_cfg=dict(
         pts=dict(
             pc_range=point_cloud_range[:2],
-            post_center_limit_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+            post_center_limit_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
             max_per_img=500,
             max_pool_nms=False,
             min_radius=[4, 12, 10, 1, 0.85, 0.175],
@@ -130,7 +129,7 @@ model = dict(
 
 # Data
 dataset_type = 'NuScenesDataset'
-data_root = 'data/nuscenes/'
+data_root = 'data/dair-v2x/'
 file_client_args = dict(backend='disk')
 
 
@@ -140,22 +139,10 @@ train_pipeline = [
         type='LoadPointsFromFile',
         dummy=True,
         coord_type='LIDAR',
-        load_dim=5,
-        use_dim=5,
+        load_dim=4,
+        use_dim=4,
         file_client_args=file_client_args),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
-    dict(
-        type='GlobalRotScaleTrans',
-        rot_range=[-0.3925, 0.3925],
-        scale_ratio_range=[0.95, 1.05],
-        translation_std=[0, 0, 0],
-        update_img2lidar=True),
-    dict(
-        type='RandomFlip3D',
-        sync_2d=False,
-        flip_ratio_bev_horizontal=0.5,
-        flip_ratio_bev_vertical=0.5,
-        update_img2lidar=True),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
@@ -175,21 +162,11 @@ test_pipeline = [
     dict(
         type='LoadPointsFromFile',
         coord_type='LIDAR',
-        load_dim=5,
-        use_dim=5,
+        load_dim=4,
+        use_dim=4,
         file_client_args=file_client_args),
-    dict(
-        type='MultiScaleFlipAug3D',
-        img_scale=(1333, 800),
-        pts_scale_ratio=1,
-        flip=False,
-        transforms=[
-            dict(
-                type='DefaultFormatBundle3D',
-                class_names=class_names,
-                with_label=False),
-            dict(type='Collect3D', keys=['points','img_inputs'])
-        ])
+        dict(type='DefaultFormatBundle3D', class_names=class_names, with_label=False),
+        dict(type='Collect3D', keys=['points','img_inputs'])
 ]
 # construct a pipeline for data and gt loading in show function
 # please keep its loading function consistent with test_pipeline (e.g. client)
@@ -211,13 +188,13 @@ input_modality = dict(
 
 data = dict(
     samples_per_gpu=8,
-    workers_per_gpu=4,
+    workers_per_gpu=8,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
             type=dataset_type,
             data_root=data_root,
-            ann_file=data_root + 'nuscenes_infos_train.pkl',
+            ann_file=data_root + 'dair_v2x_i_infos_train.pkl',
             pipeline=train_pipeline,
             classes=class_names,
             test_mode=False,
@@ -228,9 +205,11 @@ data = dict(
             box_type_3d='LiDAR',
             img_info_prototype='bevdet')),
     val=dict(pipeline=test_pipeline, classes=class_names,
-        modality=input_modality, img_info_prototype='bevdet'),
+             ann_file=data_root + 'dair_v2x_i_infos_val.pkl',
+             modality=input_modality, img_info_prototype='bevdet'),
     test=dict(pipeline=test_pipeline, classes=class_names,
-        modality=input_modality, img_info_prototype='bevdet'))
+              ann_file=data_root + 'dair_v2x_i_infos_val.pkl',
+              modality=input_modality, img_info_prototype='bevdet'))
 
 # Optimizer
 optimizer = dict(type='AdamW', lr=2e-4, weight_decay=0.01)
@@ -241,4 +220,5 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=0.001,
     step=[16, 22])
-runner = dict(type='EpochBasedRunner', max_epochs=24)
+checkpoint_config = dict(interval=1)
+runner = dict(type='EpochBasedRunner', max_epochs=50)

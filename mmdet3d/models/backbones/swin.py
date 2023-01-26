@@ -529,7 +529,7 @@ class SwinBlockSequence(BaseModule):
         else:
             return x, hw_shape, x, hw_shape
 
-
+BACKBONES._module_dict.pop('SwinTransformer')
 @BACKBONES.register_module()
 class SwinTransformer(BaseModule):
     """ Swin Transformer

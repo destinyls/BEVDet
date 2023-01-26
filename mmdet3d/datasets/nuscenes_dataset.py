@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import os
 import mmcv
 import torch
 import numpy as np
@@ -13,6 +14,7 @@ from ..core.bbox import Box3DMode, Coord3DMode, LiDARInstance3DBoxes
 from .custom_3d import Custom3DDataset
 from .pipelines import Compose
 
+from tools.v2x.evaluation.result2kitti import kitti_evaluation, result2kitti
 
 @DATASETS.register_module()
 class NuScenesDataset(Custom3DDataset):
@@ -573,6 +575,7 @@ class NuScenesDataset(Custom3DDataset):
         """
         result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
 
+        '''
         if isinstance(result_files, dict):
             results_dict = dict()
             for name in result_names:
@@ -581,13 +584,19 @@ class NuScenesDataset(Custom3DDataset):
             results_dict.update(ret_dict)
         elif isinstance(result_files, str):
             results_dict = self._evaluate_single(result_files)
-
+        '''
+        results_path = "work_dirs"
+        result_files = result_files["pts_bbox"]
+        dair_root = "data/dair-v2x"
+        gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")            
+        pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
+        kitti_evaluation(pred_label_path, gt_label_path)
         if tmp_dir is not None:
             tmp_dir.cleanup()
 
         if show:
             self.show(results, out_dir, pipeline=pipeline)
-        return results_dict
+        return None
 
     def _build_default_pipeline(self):
         """Build the default pipeline for this dataset."""

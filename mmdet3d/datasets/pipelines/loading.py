@@ -400,7 +400,7 @@ class LoadPointsFromMultiSweeps(object):
 
     def __init__(self,
                  sweeps_num=10,
-                 load_dim=5,
+                 load_dim=4,
                  use_dim=[0, 1, 2, 4],
                  file_client_args=dict(backend='disk'),
                  pad_empty_sweeps=False,
