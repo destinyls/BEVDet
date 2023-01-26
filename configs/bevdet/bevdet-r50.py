@@ -19,11 +19,11 @@ data_config={
     'src_size': (1080, 1920),
 
     # Augmentation
-    'resize': (-0.00, 0.00),
-    'rot': (0.0, 0.0),
-    'flip': False,
+    'resize': (-0.06, 0.11),
+    'rot': (-5.4, 5.4),
+    'flip': True,
     'crop_h': (0.0, 0.0),
-    'resize_test':0.00,
+    'resize_test':0.04,
 }
 
 # Model
@@ -138,15 +138,15 @@ train_pipeline = [
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(
         type='GlobalRotScaleTrans',
-        rot_range=[-0.0, 0.0],
-        scale_ratio_range=[1.0, 1.0],
+        rot_range=[-0.3925, 0.3925],
+        scale_ratio_range=[0.95, 1.05],
         translation_std=[0, 0, 0],
         update_img2lidar=True),
     dict(
         type='RandomFlip3D',
         sync_2d=False,
-        flip_ratio_bev_horizontal=0.0,
-        flip_ratio_bev_vertical=0.0,
+        flip_ratio_bev_horizontal=0.5,
+        flip_ratio_bev_vertical=0.5,
         update_img2lidar=True),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
@@ -237,4 +237,4 @@ lr_config = dict(
     step=[16, 22])
 evaluation = dict(interval=1)
 checkpoint_config = dict(interval=1)
-runner = dict(type='EpochBasedRunner', max_epochs=80)
+runner = dict(type='EpochBasedRunner', max_epochs=50)

@@ -21,7 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description='MMDet test (and eval) a model')
     parser.add_argument('config', help='test config file path')
-    parser.add_argument('--checkpoint', default="", help='checkpoint file')
+    parser.add_argument('checkpoint', default="", help='checkpoint file')
     parser.add_argument('--out', help='output result file in pickle format')
     parser.add_argument(
         '--fuse-conv-bn',
@@ -214,7 +214,6 @@ def main():
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
             print(dataset.evaluate(outputs, **eval_kwargs))
-
 
 if __name__ == '__main__':
     main()
