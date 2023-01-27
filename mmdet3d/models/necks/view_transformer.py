@@ -139,7 +139,7 @@ class ViewTransformerLiftSplatShoot(BaseModule):
         shap = points_const.shape
         paddings = torch.ones((shap[0], shap[1], shap[2], shap[3], shap[4], 1, 1), device=points_const.device)
         points_const = torch.cat((points_const, paddings), dim=-2)  
-        intrins_extend = torch.zeros((intrins.shape[0], intrins.shape[1], 4, 4), device=points_const.device)
+        intrins_extend = torch.zeros((intrins.shape[0], intrins.shape[1], 4, 4), device=intrins.device)
         intrins_extend[:,:,:3,:3] = intrins
         intrins_extend[:,:,3,3] = 1.0
         combine_virtual = sensor2virtuals.matmul(torch.inverse(intrins_extend))
@@ -189,7 +189,7 @@ class ViewTransformerLiftSplatShoot(BaseModule):
             points[:,:,:,:,:,2] = points[:,:,:,:,:,2]+offset.view(B,N,D,H,W)
         points = torch.inverse(post_rots).view(B, N, 1, 1, 1, 3, 3).matmul(points.unsqueeze(-1))
 
-        # points = self.depth2location(points, rots, trans, intrins)
+        points = self.depth2location(points, rots, trans, intrins)
         points = self.height2localtion(points, rots, trans, intrins, sensor2virtuals, reference_heights)
         # points_numpy = points.detach().cpu().numpy()
         return points

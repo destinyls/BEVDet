@@ -159,8 +159,8 @@ train_pipeline = [
     dict(
         type='RandomFlip3D',
         sync_2d=False,
-        flip_ratio_bev_horizontal=0.5,
-        flip_ratio_bev_vertical=0.5,
+        flip_ratio_bev_horizontal=0.0,
+        flip_ratio_bev_vertical=0.0,
         update_img2lidar=True),
     dict(type='PointToMultiViewDepth', grid_config=grid_config),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
@@ -226,7 +226,7 @@ input_modality = dict(
 
 data = dict(
     samples_per_gpu=8,
-    workers_per_gpu=4,
+    workers_per_gpu=8,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
