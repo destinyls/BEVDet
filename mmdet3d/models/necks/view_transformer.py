@@ -1,5 +1,5 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
-
+import numpy as np
 import torch
 import torch.nn as nn
 from mmcv.runner import BaseModule
@@ -98,7 +98,19 @@ class ViewTransformerLiftSplatShoot(BaseModule):
         # make grid in image plane
         ogfH, ogfW = self.data_config['input_size']
         fH, fW = ogfH // self.downsample, ogfW // self.downsample
-        ds = torch.arange(*self.grid_config['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        # depth
+        # ds = torch.arange(*self.grid_config['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        
+        # height
+        
+        alpha = 1.0
+        num_bins = self.grid_config['dbound'][2]
+        hmean, hlen = (self.grid_config['dbound'][0] + self.grid_config['dbound'][1]) / 2.0, (self.grid_config['dbound'][1] - self.grid_config['dbound'][0]) / 2.0
+        d_coords = np.arange(-1 * num_bins//2, num_bins//2, 1) / (num_bins//2)    
+        flag = np.sign(d_coords)
+        d_coords = np.power(np.abs(d_coords), alpha) * flag
+        d_coords = d_coords * hlen + hmean
+        ds = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         D, _, _ = ds.shape
         xs = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(1, 1, fW).expand(D, fH, fW)
         ys = torch.linspace(0, ogfH - 1, fH, dtype=torch.float).view(1, fH, 1).expand(D, fH, fW)
@@ -106,8 +118,63 @@ class ViewTransformerLiftSplatShoot(BaseModule):
         # D x H x W x 3
         frustum = torch.stack((xs, ys, ds), -1)
         return nn.Parameter(frustum, requires_grad=False)
+    
+    def height2localtion(self, points, rots, trans, intrins, sensor2virtuals, reference_heights):
+        # cam_to_ego
+        B, N, _ = trans.shape
+        reference_heights = reference_heights.view(B, N, 1, 1, 1, 1,
+                                                   1).repeat(1, 1, points.shape[2], points.shape[3], points.shape[4], 1, 1)
+        height = -1 * points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
+        points_const = points.clone()
+        points_const[:, :, :, :, :, 2, :] = 10
+        points_const = torch.cat(
+            (points_const[:, :, :, :, :, :2] * points_const[:, :, :, :, :, 2:3],
+             points_const[:, :, :, :, :, 2:]), 5)
 
-    def get_geometry(self, rots, trans, intrins, post_rots, post_trans, offset=None):
+        if intrins.shape[3]==4: # for KITTI
+            shift = intrins[:,:,:3,3]
+            points_const  = points_const - shift.view(B,N,1,1,1,3,1)
+            intrins = intrins[:,:,:3,:3]
+        
+        shap = points_const.shape
+        paddings = torch.ones((shap[0], shap[1], shap[2], shap[3], shap[4], 1, 1), device=points_const.device)
+        points_const = torch.cat((points_const, paddings), dim=-2)  
+        intrins_extend = torch.zeros((intrins.shape[0], intrins.shape[1], 4, 4), device=points_const.device)
+        intrins_extend[:,:,:3,:3] = intrins
+        intrins_extend[:,:,3,3] = 1.0
+        combine_virtual = sensor2virtuals.matmul(torch.inverse(intrins_extend))
+        points_virtual = combine_virtual.view(B, N, 1, 1, 1, 4, 4).matmul(points_const)  
+        
+        ratio = height[:, :, :, :, :, 0] / points_virtual[:, :, :, :, :, 1, 0]
+        ratio = ratio.view(B, N, ratio.shape[2], ratio.shape[3], ratio.shape[4], 1, 1).repeat(1, 1, 1, 1, 1, 4, 1)
+        points = points_virtual * ratio
+        points[:, :, :, :, :, 3, :] = 1
+        
+        sensor2ego_mat =  torch.zeros_like(sensor2virtuals)
+        sensor2ego_mat[:,:,:3,:3] = rots
+        sensor2ego_mat[:,:,:3,3] = trans
+        sensor2ego_mat[:,:,3,3] = 1.0
+        combine_ego = sensor2ego_mat.matmul(torch.inverse(sensor2virtuals))
+        points = combine_ego.view(B, N, 1, 1, 1, 4, 4).matmul(points)
+        points = points[:, :, :, :, :, :3, 0]
+        return points
+
+    def depth2location(self, points, rots, trans, intrins):
+        # cam_to_ego
+        B, N, _ = trans.shape
+        points = torch.cat((points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
+                            points[:, :, :, :, :, 2:3]
+                            ), 5)
+        if intrins.shape[3]==4: # for KITTI
+            shift = intrins[:,:,:3,3]
+            points  = points - shift.view(B,N,1,1,1,3,1)
+            intrins = intrins[:,:,:3,:3]
+        combine = rots.matmul(torch.inverse(intrins))
+        points = combine.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
+        points += trans.view(B, N, 1, 1, 1, 3)
+        return points
+
+    def get_geometry(self, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, offset=None):
         """Determine the (x,y,z) locations (in the ego frame)
         of the points in the point cloud.
         Returns B x N x D x H/downsample x W/downsample x 3
@@ -122,18 +189,8 @@ class ViewTransformerLiftSplatShoot(BaseModule):
             points[:,:,:,:,:,2] = points[:,:,:,:,:,2]+offset.view(B,N,D,H,W)
         points = torch.inverse(post_rots).view(B, N, 1, 1, 1, 3, 3).matmul(points.unsqueeze(-1))
 
-        # cam_to_ego
-        points = torch.cat((points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
-                            points[:, :, :, :, :, 2:3]
-                            ), 5)
-        if intrins.shape[3]==4: # for KITTI
-            shift = intrins[:,:,:3,3]
-            points  = points - shift.view(B,N,1,1,1,3,1)
-            intrins = intrins[:,:,:3,:3]
-        combine = rots.matmul(torch.inverse(intrins))
-        points = combine.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
-        points += trans.view(B, N, 1, 1, 1, 3)
-
+        # points = self.depth2location(points, rots, trans, intrins)
+        points = self.height2localtion(points, rots, trans, intrins, sensor2virtuals, reference_heights)
         # points_numpy = points.detach().cpu().numpy()
         return points
 
@@ -187,7 +244,7 @@ class ViewTransformerLiftSplatShoot(BaseModule):
 
         return final
 
-    def voxel_pooling_accelerated(self, rots, trans, intrins, post_rots, post_trans, x):
+    def voxel_pooling_accelerated(self, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, x):
         B, N, D, H, W, C = x.shape
         Nprime = B * N * D * H * W
         nx = self.nx.to(torch.long)
@@ -196,7 +253,7 @@ class ViewTransformerLiftSplatShoot(BaseModule):
         max = 300
         # flatten indices
         if self.geom_feats is None:
-            geom_feats = self.get_geometry(rots, trans, intrins, post_rots, post_trans)
+            geom_feats = self.get_geometry(rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights)
             geom_feats = ((geom_feats - (self.bx - self.dx / 2.)) / self.dx).long()
             geom_feats = geom_feats.view(Nprime, 3)
             batch_ix = torch.cat([torch.full([Nprime // B, 1], ix,
@@ -253,7 +310,8 @@ class ViewTransformerLiftSplatShoot(BaseModule):
         return final
 
     def forward(self, input):
-        x, rots, trans, intrins, post_rots, post_trans = input
+        x, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights = input
+    
         B, N, C, H, W = x.shape
         x = x.view(B * N, C, H, W)
         x = self.depthnet(x)
@@ -267,9 +325,9 @@ class ViewTransformerLiftSplatShoot(BaseModule):
 
         # Splat
         if self.accelerate:
-            bev_feat = self.voxel_pooling_accelerated(rots, trans, intrins, post_rots, post_trans, volume)
+            bev_feat = self.voxel_pooling_accelerated(rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, volume)
         else:
-            geom = self.get_geometry(rots, trans, intrins, post_rots, post_trans)
+            geom = self.get_geometry(rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights)
             bev_feat = self.voxel_pooling(geom, volume)
         return bev_feat
 

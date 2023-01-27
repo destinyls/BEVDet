@@ -12,7 +12,7 @@ from mmdet.datasets.builder import PIPELINES
 from mmdet.datasets.pipelines import RandomFlip
 from ..builder import OBJECTSAMPLERS
 from .data_augment_utils import noise_per_object_v3_
-
+from .loading import get_heightnet_params
 
 @PIPELINES.register_module()
 class RandomDropPointsColor(object):
@@ -155,6 +155,19 @@ class RandomFlip3D(RandomFlip):
         input_dict['img_inputs'][1][...] = new_transform[:,:3,:3]
         input_dict['img_inputs'][2][...] = new_transform[:,:3,-1]
 
+        sensor2virtuals = []
+        reference_heights = []
+        for i in range(new_transform.shape[0]):
+            sensor2lidar = new_transform[i].numpy()
+            sensor2lidar_rotation = sensor2lidar[:3, :3]
+            sensor2lidar_translation = sensor2lidar[:3, 3]
+            sensor2virtual, reference_height = get_heightnet_params(sensor2lidar_rotation, sensor2lidar_translation)
+            sensor2virtuals.append(sensor2virtual)
+            reference_heights.append(reference_height)
+        sensor2virtuals = torch.Tensor(sensor2virtuals)
+        reference_heights = torch.Tensor(reference_heights)
+        input_dict['img_inputs'][-2][...] = sensor2virtuals
+        input_dict['img_inputs'][-1][...] = reference_heights
 
     def __call__(self, input_dict):
         """Call function to flip points, values in the ``bbox3d_fields`` and \
@@ -679,6 +692,19 @@ class GlobalRotScaleTrans(object):
         input_dict['img_inputs'][1][...] = new_transform[:,:3,:3]
         input_dict['img_inputs'][2][...] = new_transform[:,:3,-1]
 
+        sensor2virtuals = []
+        reference_heights = []
+        for i in range(new_transform.shape[0]):
+            sensor2lidar = new_transform[i].numpy()
+            sensor2lidar_rotation = sensor2lidar[:3, :3]
+            sensor2lidar_translation = sensor2lidar[:3, 3]
+            sensor2virtual, reference_height = get_heightnet_params(sensor2lidar_rotation, sensor2lidar_translation)
+            sensor2virtuals.append(sensor2virtual)
+            reference_heights.append(reference_height)
+        sensor2virtuals = torch.Tensor(sensor2virtuals)
+        reference_heights = torch.Tensor(reference_heights)
+        input_dict['img_inputs'][-2][...] = sensor2virtuals
+        input_dict['img_inputs'][-1][...] = reference_heights
 
     def __call__(self, input_dict):
         """Private function to rotate, scale and translate bounding boxes and \

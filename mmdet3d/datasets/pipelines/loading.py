@@ -1,4 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import math
+import cv2
 import torch
 import torchvision
 from PIL import Image
@@ -10,6 +12,56 @@ from mmdet3d.core.points import BasePoints, get_points_type
 from mmdet.datasets.builder import PIPELINES
 from mmdet.datasets.pipelines import LoadAnnotations, LoadImageFromFile
 
+def equation_plane(points): 
+        x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
+        x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
+        x3, y3, z3 = points[2, 0], points[2, 1], points[2, 2]
+        a1 = x2 - x1
+        b1 = y2 - y1
+        c1 = z2 - z1
+        a2 = x3 - x1
+        b2 = y3 - y1
+        c2 = z3 - z1
+        a = b1 * c2 - b2 * c1
+        b = a2 * c1 - a1 * c2
+        c = a1 * b2 - b1 * a2
+        d = (- a * x1 - b * y1 - c * z1)
+        return np.array([a, b, c, d])
+
+def get_denorm(sweepego2sweepsensor):
+    ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+    ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
+    ground_points_cam = np.matmul(sweepego2sweepsensor, ground_points_lidar.T).T
+    denorm = -1 * equation_plane(ground_points_cam)
+    return denorm
+
+def get_sensor2virtual(denorm):
+    origin_vector = np.array([0, 1, 0])    
+    target_vector = -1 * np.array([denorm[0], denorm[1], denorm[2]])
+    target_vector_norm = target_vector / np.sqrt(target_vector[0]**2 + target_vector[1]**2 + target_vector[2]**2)       
+    sita = math.acos(np.inner(target_vector_norm, origin_vector))
+    n_vector = np.cross(target_vector_norm, origin_vector) 
+    n_vector = n_vector / np.sqrt(n_vector[0]**2 + n_vector[1]**2 + n_vector[2]**2)
+    n_vector = n_vector.astype(np.float32)
+    rot_mat, _ = cv2.Rodrigues(n_vector * sita)
+    rot_mat = rot_mat.astype(np.float32)
+    sensor2virtual = np.eye(4)
+    sensor2virtual[:3, :3] = rot_mat
+    return sensor2virtual
+
+def get_reference_height(denorm):
+    ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
+    return np.array([ref_height])
+
+def get_heightnet_params(sensor2lidar_rotation, sensor2lidar_translation):
+    sensor2lidar = np.eye(4)
+    sensor2lidar[:3, :3] = sensor2lidar_rotation
+    sensor2lidar[:3, 3] = sensor2lidar_translation
+    lidar2sensor = np.linalg.inv(sensor2lidar)
+    denorm = get_denorm(lidar2sensor)
+    sensor2virtual = get_sensor2virtual(denorm)
+    reference_height = get_reference_height(denorm)
+    return sensor2virtual, reference_height
 
 @PIPELINES.register_module()
 class PointToMultiViewDepth(object):
@@ -40,7 +92,8 @@ class PointToMultiViewDepth(object):
 
     def __call__(self, results):
         points_lidar = results['points']
-        imgs, rots, trans, intrins, post_rots, post_trans = results['img_inputs']
+        imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights = results['img_inputs']
+        # imgs, rots, trans, intrins, post_rots, post_trans = results['img_inputs']
         depth_map_list = []
         for cid in range(rots.shape[0]):
             combine = rots[cid].matmul(torch.inverse(intrins[cid]))
@@ -52,7 +105,7 @@ class PointToMultiViewDepth(object):
             depth_map = self.points2depthmap(points_img, imgs.shape[2], imgs.shape[3])
             depth_map_list.append(depth_map)
         depth_map = torch.stack(depth_map_list)
-        results['img_inputs'] = (imgs, rots, trans, intrins, post_rots, post_trans, depth_map)
+        results['img_inputs'] = (imgs, rots, trans, intrins, post_rots, post_trans, depth_map, sensor2virtuals, reference_heights)
         return results
 
 
@@ -222,6 +275,8 @@ class LoadMultiViewImageFromFiles_BEVDet(object):
         intrins = []
         post_rots = []
         post_trans = []
+        sensor2virtuals = []
+        reference_heights = []
         cams = self.choose_cams()
         for cam in cams:
             cam_data = results['img_info'][cam]
@@ -233,6 +288,10 @@ class LoadMultiViewImageFromFiles_BEVDet(object):
             intrin = torch.Tensor(cam_data['cam_intrinsic'])
             rot = torch.Tensor(cam_data['sensor2lidar_rotation'])
             tran = torch.Tensor(cam_data['sensor2lidar_translation'])
+            sensor2virtual, reference_height = get_heightnet_params(cam_data['sensor2lidar_rotation'], cam_data['sensor2lidar_translation'])
+            
+            sensor2virtual = torch.Tensor(sensor2virtual)
+            reference_height = torch.Tensor(reference_height)
 
             # augmentation (resize, crop, horizontal flip, rotate)
             resize, resize_dims, crop, flip, rotate = self.sample_augmentation(H=img.height,
@@ -278,6 +337,8 @@ class LoadMultiViewImageFromFiles_BEVDet(object):
             intrins.append(intrin)
             rots.append(rot)
             trans.append(tran)
+            sensor2virtuals.append(sensor2virtual)
+            reference_heights.append(reference_height)
             post_rots.append(post_rot)
             post_trans.append(post_tran)
 
@@ -342,10 +403,10 @@ class LoadMultiViewImageFromFiles_BEVDet(object):
                         trans.extend(trans)
                 else:
                     assert False
-        imgs, rots, trans, intrins, post_rots, post_trans = (torch.stack(imgs), torch.stack(rots), torch.stack(trans),
+        imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights = (torch.stack(imgs), torch.stack(rots), torch.stack(trans),
                                                              torch.stack(intrins), torch.stack(post_rots),
-                                                             torch.stack(post_trans))
-        return imgs, rots, trans, intrins, post_rots, post_trans
+                                                             torch.stack(post_trans), torch.stack(sensor2virtuals), torch.stack(reference_heights))
+        return imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights
 
     def __call__(self, results):
         results['img_inputs'] = self.get_inputs(results)
