@@ -135,6 +135,13 @@ file_client_args = dict(backend='disk')
 
 train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles_BEVDet', is_train=True, data_config=data_config),
+    dict(
+        type='LoadPointsFromFile',
+        dummy=True,
+        coord_type='LIDAR',
+        load_dim=4,
+        use_dim=4,
+        file_client_args=file_client_args),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(
         type='GlobalRotScaleTrans',
@@ -235,6 +242,6 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=0.001,
     step=[16, 22])
-evaluation = dict(interval=1)
-checkpoint_config = dict(interval=1)
-runner = dict(type='EpochBasedRunner', max_epochs=50)
+evaluation = dict(interval=150)
+checkpoint_config = dict(interval=10)
+runner = dict(type='EpochBasedRunner', max_epochs=151)

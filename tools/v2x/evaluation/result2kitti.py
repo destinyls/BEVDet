@@ -141,13 +141,7 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
         pred_lines = []
         bboxes = []
         for pred in preds:
-            rot_mat =  Quaternion(pred["rotation"]).rotation_matrix
-            cos_theta = rot_mat[0, 0]
-            sin_theta = rot_mat[1, 0]
-            if sin_theta > 0:
-                yaw_lidar = np.arccos(cos_theta)
-            else:
-                yaw_lidar = -1 * np.arccos(cos_theta)
+            yaw_lidar = pred["rot_y"]
             loc = pred["translation"]
             dim = pred["size"]
             detection_score = pred["detection_score"]
