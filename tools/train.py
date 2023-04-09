@@ -6,6 +6,7 @@ import os
 import time
 import warnings
 from os import path as osp
+from collections import OrderedDict
 
 import mmcv
 import torch
@@ -112,6 +113,48 @@ def parse_args():
 
     return args
 
+def clean_state_dict(state_dict):
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        if k[:13] == 'img_backbone.':
+            new_state_dict[k] = v
+        if k[:9] == 'img_neck.':
+            new_state_dict[k] = v
+        if k[:21] == 'img_view_transformer.':
+            new_state_dict[k] = v    
+    return new_state_dict
+
+def load_checkpoints(model, ckpt_path):
+    device = torch.device("cpu")
+    checkpoints = torch.load(ckpt_path, map_location=device)
+    if 'state_dict' in checkpoints:
+        state_dict = checkpoints['state_dict']
+    else:
+        state_dict = checkpoints
+    state_dict = clean_state_dict(checkpoints['state_dict'])
+    model.load_state_dict(state_dict, strict=False)
+
+def enable_frozen_layers(model):
+    for p in model.img_backbone.parameters():
+        p.requires_grad = False
+    for p in model.img_neck.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.reduce_conv.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.context_conv.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.bn.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.depth_mlp.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.depth_se.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.context_mlp.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.context_se.parameters():
+        p.requires_grad = False
+    for p in model.img_view_transformer.depth_net.depth_conv.parameters():
+        p.requires_grad = False
 
 def main():
     args = parse_args()
@@ -222,6 +265,9 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
+    load_checkpoints(model, "/data/bevdet_pretrained_model/bevdet4d-2-r50-depth-cbgs.pth")
+    enable_frozen_layers(model)
+    
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:
@@ -249,6 +295,7 @@ def main():
             if hasattr(datasets[0], 'PALETTE') else None)
     # add an attribute for visualization convenience
     model.CLASSES = datasets[0].CLASSES
+    
     train_model(
         model,
         datasets,

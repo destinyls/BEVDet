@@ -1,5 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import mmcv
+import cv2
+import math
 import numpy as np
 import torch
 from PIL import Image
@@ -10,6 +12,56 @@ from mmdet.datasets.pipelines import LoadAnnotations, LoadImageFromFile
 from ...core.bbox import LiDARInstance3DBoxes
 from ..builder import PIPELINES
 
+def equation_plane(points): 
+        x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
+        x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
+        x3, y3, z3 = points[2, 0], points[2, 1], points[2, 2]
+        a1 = x2 - x1
+        b1 = y2 - y1
+        c1 = z2 - z1
+        a2 = x3 - x1
+        b2 = y3 - y1
+        c2 = z3 - z1
+        a = b1 * c2 - b2 * c1
+        b = a2 * c1 - a1 * c2
+        c = a1 * b2 - b1 * a2
+        d = (- a * x1 - b * y1 - c * z1)
+        return np.array([a, b, c, d])
+
+def get_denorm(sweepego2sweepsensor):
+    ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+    ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
+    ground_points_cam = np.matmul(sweepego2sweepsensor, ground_points_lidar.T).T
+    denorm = -1 * equation_plane(ground_points_cam)
+    return denorm
+
+def get_sensor2virtual(denorm):
+    origin_vector = np.array([0, 1, 0])    
+    target_vector = -1 * np.array([denorm[0], denorm[1], denorm[2]])
+    target_vector_norm = target_vector / np.sqrt(target_vector[0]**2 + target_vector[1]**2 + target_vector[2]**2)       
+    sita = math.acos(np.inner(target_vector_norm, origin_vector))
+    n_vector = np.cross(target_vector_norm, origin_vector) 
+    n_vector = n_vector / np.sqrt(n_vector[0]**2 + n_vector[1]**2 + n_vector[2]**2)
+    n_vector = n_vector.astype(np.float32)
+    rot_mat, _ = cv2.Rodrigues(n_vector * sita)
+    rot_mat = rot_mat.astype(np.float32)
+    sensor2virtual = np.eye(4)
+    sensor2virtual[:3, :3] = rot_mat
+    return sensor2virtual
+
+def get_reference_height(denorm):
+    ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
+    return np.array([ref_height])
+
+def get_heightnet_params(sensor2lidar_rotation, sensor2lidar_translation):
+    sensor2lidar = np.eye(4)
+    sensor2lidar[:3, :3] = sensor2lidar_rotation.numpy()
+    sensor2lidar[:3, 3] = sensor2lidar_translation.numpy()
+    lidar2sensor = np.linalg.inv(sensor2lidar)
+    denorm = get_denorm(lidar2sensor)
+    sensor2virtual = get_sensor2virtual(denorm)
+    reference_height = get_reference_height(denorm)
+    return torch.Tensor(sensor2virtual), torch.Tensor(reference_height)
 
 @PIPELINES.register_module()
 class LoadMultiViewImageFromFiles(object):
@@ -728,7 +780,7 @@ class PointToMultiViewDepth(object):
     def __call__(self, results):
         points_lidar = results['points']
         imgs, rots, trans, intrins = results['img_inputs'][:4]
-        post_rots, post_trans, bda = results['img_inputs'][4:]
+        post_rots, post_trans, sensor2virtuals, reference_heights, bda = results['img_inputs'][4:]
         depth_map_list = []
         for cid in range(len(results['cam_names'])):
             cam_name = results['cam_names'][cid]
@@ -969,6 +1021,8 @@ class PrepareImageInputs(object):
         intrins = []
         post_rots = []
         post_trans = []
+        sensor2virtuals = []
+        reference_heights = []
         cam_names = self.choose_cams()
         results['cam_names'] = cam_names
         canvas = []
@@ -981,7 +1035,6 @@ class PrepareImageInputs(object):
             post_tran = torch.zeros(2)
 
             intrin = torch.Tensor(cam_data['cam_intrinsic'])
-
             sensor2keyego, sensor2sensor = \
                 self.get_sensor2ego_transformation(results['curr'],
                                                    results['curr'],
@@ -989,6 +1042,7 @@ class PrepareImageInputs(object):
                                                    self.ego_cam)
             rot = sensor2keyego[:3, :3]
             tran = sensor2keyego[:3, 3]
+            sensor2virtual, reference_height = get_heightnet_params(rot, tran)
             # image view augmentation (resize, crop, horizontal flip, rotate)
             img_augs = self.sample_augmentation(
                 H=img.height, W=img.width, flip=flip, scale=scale)
@@ -1028,6 +1082,8 @@ class PrepareImageInputs(object):
             trans.append(tran)
             post_rots.append(post_rot)
             post_trans.append(post_tran)
+            sensor2virtuals.append(sensor2virtual)
+            reference_heights.append(reference_height)
             sensor2sensors.append(sensor2sensor)
 
         if self.sequential:
@@ -1039,6 +1095,8 @@ class PrepareImageInputs(object):
                 # align
                 trans_adj = []
                 rots_adj = []
+                sensor2virtuals_adj = []
+                reference_heights_adj = []
                 sensor2sensors_adj = []
                 for cam_name in cam_names:
                     adjsensor2keyego, sensor2sensor = \
@@ -1048,11 +1106,17 @@ class PrepareImageInputs(object):
                                                            self.ego_cam)
                     rot = adjsensor2keyego[:3, :3]
                     tran = adjsensor2keyego[:3, 3]
+                    sensor2virtual, reference_height = get_heightnet_params(rot, tran)
+
                     rots_adj.append(rot)
                     trans_adj.append(tran)
+                    sensor2virtuals_adj.append(sensor2virtual)
+                    reference_heights_adj.append(reference_height)
                     sensor2sensors_adj.append(sensor2sensor)
                 rots.extend(rots_adj)
                 trans.extend(trans_adj)
+                sensor2virtuals.extend(sensor2virtuals_adj)
+                reference_heights.extend(reference_heights_adj)
                 sensor2sensors.extend(sensor2sensors_adj)
         imgs = torch.stack(imgs)
 
@@ -1061,10 +1125,12 @@ class PrepareImageInputs(object):
         intrins = torch.stack(intrins)
         post_rots = torch.stack(post_rots)
         post_trans = torch.stack(post_trans)
+        sensor2virtuals = torch.stack(sensor2virtuals)
+        reference_heights = torch.stack(reference_heights)
         sensor2sensors = torch.stack(sensor2sensors)
         results['canvas'] = canvas
         results['sensor2sensors'] = sensor2sensors
-        return (imgs, rots, trans, intrins, post_rots, post_trans)
+        return (imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights)
 
     def __call__(self, results):
         results['img_inputs'] = self.get_inputs(results)
@@ -1142,7 +1208,7 @@ class LoadAnnotationsBEVDepth(object):
                                  origin=(0.5, 0.5, 0.5))
         results['gt_labels_3d'] = gt_labels
         imgs, rots, trans, intrins = results['img_inputs'][:4]
-        post_rots, post_trans = results['img_inputs'][4:]
+        post_rots, post_trans, sensor2virtuals, reference_heights = results['img_inputs'][4:]
         results['img_inputs'] = (imgs, rots, trans, intrins, post_rots,
-                                 post_trans, bda_rot)
+                                 post_trans, sensor2virtuals, reference_heights, bda_rot)
         return results

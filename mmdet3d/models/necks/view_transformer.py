@@ -2,12 +2,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from mmcv.cnn import build_conv_layer
 from mmcv.runner import BaseModule, force_fp32
 from torch.cuda.amp.autocast_mode import autocast
 from torch.utils.checkpoint import checkpoint
 
 from mmdet3d.ops.bev_pool_v2.bev_pool import bev_pool_v2
+from mmdet3d.models.necks.dh_fusion import DHFusion
 from mmdet.models.backbones.resnet import BasicBlock
 from ..builder import NECKS
 
@@ -47,6 +49,7 @@ class LSSViewTransformer(BaseModule):
         self.downsample = downsample
         self.create_grid_infos(**grid_config)
         self.create_frustum(grid_config['depth'], input_size, downsample)
+        self.create_frustum_height(grid_config['height'], input_size, downsample)
         self.out_channels = out_channels
         self.in_channels = in_channels
         self.depth_net = nn.Conv2d(
@@ -96,8 +99,35 @@ class LSSViewTransformer(BaseModule):
         # D x H x W x 3
         self.frustum = torch.stack((x, y, d), -1)
 
-    def get_lidar_coor(self, rots, trans, cam2imgs, post_rots, post_trans,
-                       bda):
+    def create_frustum_height(self, height_cfg, input_size, downsample):
+        """Generate the frustum template for each image.
+
+        Args:
+            height_cfg (tuple(float)): Config of grid alone depth axis in format
+                of (lower_bound, upper_bound, interval).
+            input_size (tuple(int)): Size of input images in format of (height,
+                width).
+            downsample (int): Down sample scale factor from the input size to
+                the feature size.
+        """
+        H_in, W_in = input_size
+        H_feat, W_feat = H_in // downsample, W_in // downsample
+        alpha = 1.0
+        h = np.arange(height_cfg[2]) / height_cfg[2]
+        h = np.power(h, alpha)
+        h = height_cfg[0] + h * (height_cfg[1] - height_cfg[0])
+        h = torch.tensor(h, dtype=torch.float).view(-1, 1, 1).expand(-1, H_feat, W_feat)
+
+        self.H = h.shape[0]
+        x = torch.linspace(0, W_in - 1, W_feat,  dtype=torch.float)\
+            .view(1, 1, W_feat).expand(self.H, H_feat, W_feat)
+        y = torch.linspace(0, H_in - 1, H_feat,  dtype=torch.float)\
+            .view(1, H_feat, 1).expand(self.H, H_feat, W_feat)
+
+        # H x H x W x 3
+        self.frustum_height = torch.stack((x, y, h), -1)
+
+    def get_lidar_coor(self, rots, trans, cam2imgs, post_rots, post_trans, sensor2virtuals, reference_heights, bda):
         """Calculate the locations of the frustum points in the lidar
         coordinate system.
 
@@ -131,6 +161,56 @@ class LSSViewTransformer(BaseModule):
             (points[..., :2, :] * points[..., 2:3, :], points[..., 2:3, :]), 5)
         combine = rots.matmul(torch.inverse(cam2imgs))
         points = combine.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
+        points += trans.view(B, N, 1, 1, 1, 3)
+        points = bda.view(B, 1, 1, 1, 1, 3,
+                          3).matmul(points.unsqueeze(-1)).squeeze(-1)
+        return points
+
+    def get_lidar_coor_height(self, rots, trans, cam2imgs, post_rots, post_trans, sensor2virtuals, reference_heights, bda):
+        """Calculate the locations of the frustum points in the lidar
+        coordinate system.
+
+        Args:
+            rots (torch.Tensor): Rotation from camera coordinate system to
+                lidar coordinate system in shape (B, N_cams, 3, 3).
+            trans (torch.Tensor): Translation from camera coordinate system to
+                lidar coordinate system in shape (B, N_cams, 3).
+            cam2imgs (torch.Tensor): Camera intrinsic matrixes in shape
+                (B, N_cams, 3, 3).
+            post_rots (torch.Tensor): Rotation in camera coordinate system in
+                shape (B, N_cams, 3, 3). It is derived from the image view
+                augmentation.
+            post_trans (torch.Tensor): Translation in camera coordinate system
+                derived from image view augmentation in shape (B, N_cams, 3).
+
+        Returns:
+            torch.tensor: Point coordinates in shape
+                (B, N_cams, D, ownsample, 3)
+        """
+        B, N, _ = trans.shape
+
+        # post-transformation
+        # B x N x D x H x W x 3
+        points = self.frustum_height.to(rots) - post_trans.view(B, N, 1, 1, 1, 3)
+        points = torch.inverse(post_rots).view(B, N, 1, 1, 1, 3, 3)\
+            .matmul(points.unsqueeze(-1))
+        
+        reference_heights = reference_heights.view(B, N, 1, 1, 1, 1, 1).repeat(1, 1, points.shape[2], points.shape[3], points.shape[4], 1, 1)
+        height = -1 * points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
+        points_const = points.clone()
+        points_const[:, :, :, :, :, 2, :] = 10
+        points_const = torch.cat(
+            (points_const[:, :, :, :, :, :2] * points_const[:, :, :, :, :, 2:3],
+             points_const[:, :, :, :, :, 2:]), 5)
+        points_const = torch.inverse(cam2imgs).view(B, N, 1, 1, 1, 3, 3).matmul(points_const)
+        points_const = torch.cat((points_const, torch.ones_like(points_const[:, :, :, :, :, 2:])), 5) 
+        points_const_virtual = sensor2virtuals.view(B, N, 1, 1, 1, 4, 4).matmul(points_const)
+        ratio = height[:, :, :, :, :, 0] / points_const_virtual[:, :, :, :, :, 1, 0]
+        ratio = ratio.view(B, N, ratio.shape[2], ratio.shape[3], ratio.shape[4], 1, 1).repeat(1, 1, 1, 1, 1, 4, 1)
+        points = points_const_virtual * ratio
+        points[:, :, :, :, :, 3, :] = 1
+        points = (torch.inverse(sensor2virtuals).view(B, N, 1, 1, 1, 4, 4).matmul(points))[:, :, :, :, :, :3, :]
+        points = rots.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
         points += trans.view(B, N, 1, 1, 1, 3)
         points = bda.view(B, 1, 1, 1, 1, 3,
                           3).matmul(points.unsqueeze(-1)).squeeze(-1)
@@ -245,11 +325,11 @@ class LSSViewTransformer(BaseModule):
 
     def pre_compute(self, input):
         if self.initial_flag:
-            coor = self.get_lidar_coor(*input[1:7])
+            coor = self.get_lidar_coor(*input[1:9])
             self.init_acceleration_v2(coor)
             self.initial_flag = False
 
-    def view_transform_core(self, input, depth, tran_feat):
+    def view_transform_core(self, input, depth, height, tran_feat):
         B, N, C, H, W = input[0].shape
 
         # Lift-Splat
@@ -267,16 +347,27 @@ class LSSViewTransformer(BaseModule):
 
             bev_feat = bev_feat.squeeze(2)
         else:
-            coor = self.get_lidar_coor(*input[1:7])
-            bev_feat = self.voxel_pooling_v2(
-                coor, depth.view(B, N, self.D, H, W),
-                tran_feat.view(B, N, self.out_channels, H, W))
+            if self.use_height:
+                coor_height = self.get_lidar_coor_height(*input[1:9])
+                bev_feat_height = self.voxel_pooling_v2(
+                    coor_height, height.view(B, N, self.H, H, W),
+                    tran_feat.view(B, N, tran_feat.shape[-3], H, W))
+                coor = self.get_lidar_coor(*input[1:9])
+                bev_feat = self.voxel_pooling_v2(
+                    coor, depth.view(B, N, self.D, H, W),
+                    tran_feat.view(B, N, tran_feat.shape[-3], H, W))
+                bev_feat = self.dh_fusion(bev_feat, bev_feat).contiguous()
+            else:
+                coor = self.get_lidar_coor(*input[1:9])
+                bev_feat = self.voxel_pooling_v2(
+                    coor, depth.view(B, N, self.D, H, W),
+                    tran_feat.view(B, N, tran_feat.shape[-3], H, W))
         return bev_feat, depth
 
-    def view_transform(self, input, depth, tran_feat):
+    def view_transform(self, input, depth, height, tran_feat):
         if self.accelerate:
             self.pre_compute(input)
-        return self.view_transform_core(input, depth, tran_feat)
+        return self.view_transform_core(input, depth, height, tran_feat)
 
     def forward(self, input):
         """Transform image-view feature into bird-eye-view feature.
@@ -434,9 +525,7 @@ class Mlp(nn.Module):
         x = self.drop2(x)
         return x
 
-
 class SELayer(nn.Module):
-
     def __init__(self, channels, act_layer=nn.ReLU, gate_layer=nn.Sigmoid):
         super().__init__()
         self.conv_reduce = nn.Conv2d(channels, channels, 1, bias=True)
@@ -451,6 +540,46 @@ class SELayer(nn.Module):
         return x * self.gate(x_se)
 
 
+class HeightLayer(nn.Module):
+    def __init__(self, mid_channels, height_channels, use_dcn, use_aspp):
+        super(HeightLayer, self).__init__()
+        self.height_mlp = Mlp(27, mid_channels, mid_channels)
+        self.height_se = SELayer(mid_channels)  # NOTE: add camera-aware
+        height_conv_list = [
+            BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
+        ]
+        if use_aspp:
+            height_conv_list.append(ASPP(mid_channels, mid_channels))
+        if use_dcn:
+            height_conv_list.append(
+                build_conv_layer(
+                    cfg=dict(
+                        type='DCN',
+                        in_channels=mid_channels,
+                        out_channels=mid_channels,
+                        kernel_size=3,
+                        padding=1,
+                        groups=4,
+                        im2col_step=128,
+                    )))
+        height_conv_list.append(
+            nn.Conv2d(
+                mid_channels,
+                height_channels,
+                kernel_size=1,
+                stride=1,
+                padding=0))
+        self.height_conv = nn.Sequential(*height_conv_list)
+
+    def forward(self, x, mlp_input):
+        height_se = self.height_mlp(mlp_input)[..., None, None]
+        height = self.height_se(x, height_se)
+        height = self.height_conv(height)
+        return height.softmax(1)
+
+
 class DepthNet(nn.Module):
 
     def __init__(self,
@@ -458,9 +587,13 @@ class DepthNet(nn.Module):
                  mid_channels,
                  context_channels,
                  depth_channels,
+                 height_channels,
                  use_dcn=True,
-                 use_aspp=True):
+                 use_aspp=True,
+                 use_height=False):
         super(DepthNet, self).__init__()
+        
+        self.use_height = use_height
         self.reduce_conv = nn.Sequential(
             nn.Conv2d(
                 in_channels, mid_channels, kernel_size=3, stride=1, padding=1),
@@ -501,7 +634,9 @@ class DepthNet(nn.Module):
                 stride=1,
                 padding=0))
         self.depth_conv = nn.Sequential(*depth_conv_list)
-
+        if use_height:
+            self.height_layer = HeightLayer(mid_channels, height_channels, use_dcn, use_aspp)
+        
     def forward(self, x, mlp_input):
         mlp_input = self.bn(mlp_input.reshape(-1, mlp_input.shape[-1]))
         x = self.reduce_conv(x)
@@ -511,7 +646,11 @@ class DepthNet(nn.Module):
         depth_se = self.depth_mlp(mlp_input)[..., None, None]
         depth = self.depth_se(x, depth_se)
         depth = self.depth_conv(depth)
-        return torch.cat([depth, context], dim=1)
+        if self.use_height:
+            height = self.height_layer(x, mlp_input)
+            return torch.cat([depth, height, context], dim=1)
+        else:
+            return torch.cat([depth, context], dim=1)
 
 
 class DepthAggregation(nn.Module):
@@ -580,9 +719,13 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
 
     def __init__(self, loss_depth_weight=3.0, depthnet_cfg=dict(), **kwargs):
         super(LSSViewTransformerBEVDepth, self).__init__(**kwargs)
+        self.use_height = depthnet_cfg['use_height']
         self.loss_depth_weight = loss_depth_weight
         self.depth_net = DepthNet(self.in_channels, self.in_channels,
-                                  self.out_channels, self.D, **depthnet_cfg)
+                                  self.out_channels, self.D, self.H, **depthnet_cfg)
+        
+        if self.use_height:
+            self.dh_fusion = DHFusion(channels=self.out_channels + self.H, num_heads=8, num_levels=1, num_layers=3)
 
     def get_mlp_input(self, rot, tran, intrin, post_rot, post_tran, bda):
         B, N, _, _ = rot.shape
@@ -658,13 +801,16 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
         return self.loss_depth_weight * depth_loss
 
     def forward(self, input):
-        (x, rots, trans, intrins, post_rots, post_trans, bda,
-         mlp_input) = input[:8]
-
+        (x, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, bda, mlp_input) = input[:10]
         B, N, C, H, W = x.shape
         x = x.view(B * N, C, H, W)
         x = self.depth_net(x, mlp_input)
         depth_digit = x[:, :self.D, ...]
-        tran_feat = x[:, self.D:self.D + self.out_channels, ...]
         depth = depth_digit.softmax(dim=1)
-        return self.view_transform(input, depth, tran_feat)
+        if self.use_height:
+            height = x[:, self.D : self.D+self.H, ...]
+            tran_feat = x[:, self.D:self.D + self.H + self.out_channels, ...]
+            return self.view_transform(input, depth, height, tran_feat)
+        else:
+            tran_feat = x[:, self.D:self.D + self.out_channels, ...]
+            return self.view_transform(input, depth, depth, tran_feat)

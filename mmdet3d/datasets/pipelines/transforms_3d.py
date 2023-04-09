@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import torch
 import random
 import warnings
 
@@ -14,7 +15,7 @@ from mmdet3d.datasets.pipelines.compose import Compose
 from mmdet.datasets.pipelines import RandomCrop, RandomFlip, Rotate
 from ..builder import OBJECTSAMPLERS, PIPELINES
 from .data_augment_utils import noise_per_object_v3_
-
+from .loading import get_heightnet_params
 
 @PIPELINES.register_module()
 class RandomDropPointsColor(object):
@@ -102,6 +103,36 @@ class RandomFlip3D(RandomFlip):
             assert isinstance(
                 flip_ratio_bev_vertical,
                 (int, float)) and 0 <= flip_ratio_bev_vertical <= 1
+
+    def update_transform(self, input_dict):
+        transform = torch.zeros((input_dict['img_inputs'][1].shape[0],4,4)).float()
+        transform[:,:3,:3] = input_dict['img_inputs'][1]
+        transform[:,:3,-1] = input_dict['img_inputs'][2]
+        transform[:, -1, -1] = 1.0
+
+        aug_transform = torch.eye(4).float()
+        if input_dict['pcd_horizontal_flip']:
+            aug_transform[1,1] = -1
+        if input_dict['pcd_vertical_flip']:
+            aug_transform[0,0] = -1
+        aug_transform = aug_transform.view(1,4,4)
+        new_transform = aug_transform.matmul(transform)
+        input_dict['img_inputs'][1][...] = new_transform[:,:3,:3]
+        input_dict['img_inputs'][2][...] = new_transform[:,:3,-1]
+
+        sensor2virtuals = []
+        reference_heights = []
+        for i in range(new_transform.shape[0]):
+            sensor2lidar = new_transform[i].numpy()
+            sensor2lidar_rotation = sensor2lidar[:3, :3]
+            sensor2lidar_translation = sensor2lidar[:3, 3]
+            sensor2virtual, reference_height = get_heightnet_params(sensor2lidar_rotation, sensor2lidar_translation)
+            sensor2virtuals.append(sensor2virtual)
+            reference_heights.append(reference_height)
+        sensor2virtuals = torch.Tensor(sensor2virtuals)
+        reference_heights = torch.Tensor(reference_heights)
+        input_dict['img_inputs'][-2][...] = sensor2virtuals
+        input_dict['img_inputs'][-1][...] = reference_heights
 
     def random_flip_data_3d(self, input_dict, direction='horizontal'):
         """Flip 3D data randomly.

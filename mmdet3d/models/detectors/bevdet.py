@@ -54,7 +54,7 @@ class BEVDet(CenterPoint):
     def extract_img_feat(self, img, img_metas, **kwargs):
         """Extract features of images."""
         x = self.image_encoder(img[0])
-        x, depth = self.img_view_transformer([x] + img[1:7])
+        x, depth = self.img_view_transformer([x] + img[1:9])
         x = self.bev_encoder(x)
         return [x], depth
 
@@ -331,24 +331,25 @@ class BEVDet4D(BEVDet):
         output = F.grid_sample(input, grid.to(input.dtype), align_corners=True)
         return output
 
-    def prepare_bev_feat(self, img, rot, tran, intrin, post_rot, post_tran,
+    def prepare_bev_feat(self, img, rot, tran, intrin, post_rot, post_tran, sensor2virtual, reference_height,
                          bda, mlp_input):
         x = self.image_encoder(img)
         bev_feat, depth = self.img_view_transformer(
-            [x, rot, tran, intrin, post_rot, post_tran, bda, mlp_input])
+            [x, rot, tran, intrin, post_rot, post_tran, sensor2virtual, reference_height, bda, mlp_input])
         if self.pre_process:
             bev_feat = self.pre_process_net(bev_feat)[0]
         return bev_feat, depth
 
     def extract_img_feat_sequential(self, inputs, feat_prev):
         imgs, rots_curr, trans_curr, intrins = inputs[:4]
-        rots_prev, trans_prev, post_rots, post_trans, bda = inputs[4:]
+        rots_prev, trans_prev, post_rots, post_trans, sensor2virtual, reference_height, bda = inputs[4:]
+
         bev_feat_list = []
         mlp_input = self.img_view_transformer.get_mlp_input(
             rots_curr[0:1, ...], trans_curr[0:1, ...], intrins, post_rots,
             post_trans, bda[0:1, ...])
         inputs_curr = (imgs, rots_curr[0:1, ...], trans_curr[0:1, ...],
-                       intrins, post_rots, post_trans, bda[0:1,
+                       intrins, post_rots, post_trans, sensor2virtual, reference_height, bda[0:1,
                                                            ...], mlp_input)
         bev_feat, depth = self.prepare_bev_feat(*inputs_curr)
         bev_feat_list.append(bev_feat)
@@ -373,18 +374,20 @@ class BEVDet4D(BEVDet):
         imgs = inputs[0].view(B, N, self.num_frame, 3, H, W)
         imgs = torch.split(imgs, 1, 2)
         imgs = [t.squeeze(2) for t in imgs]
-        rots, trans, intrins, post_rots, post_trans, bda = inputs[1:7]
+        rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, bda = inputs[1:9]
         extra = [
             rots.view(B, self.num_frame, N, 3, 3),
             trans.view(B, self.num_frame, N, 3),
             intrins.view(B, self.num_frame, N, 3, 3),
             post_rots.view(B, self.num_frame, N, 3, 3),
-            post_trans.view(B, self.num_frame, N, 3)
+            post_trans.view(B, self.num_frame, N, 3),
+            sensor2virtuals.view(B, self.num_frame, N, 4, 4),
+            reference_heights.view(B, self.num_frame, N, 1)          
         ]
         extra = [torch.split(t, 1, 1) for t in extra]
         extra = [[p.squeeze(1) for p in t] for t in extra]
-        rots, trans, intrins, post_rots, post_trans = extra
-        return imgs, rots, trans, intrins, post_rots, post_trans, bda
+        rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights = extra
+        return imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, bda
 
     def extract_img_feat(self,
                          img,
@@ -393,22 +396,23 @@ class BEVDet4D(BEVDet):
                          sequential=False,
                          **kwargs):
         if sequential:
+            print("-----------sequential----------")
             return self.extract_img_feat_sequential(img, kwargs['feat_prev'])
-        imgs, rots, trans, intrins, post_rots, post_trans, bda = \
+        imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, bda = \
             self.prepare_inputs(img)
         """Extract features of images."""
         bev_feat_list = []
         depth_list = []
         key_frame = True  # back propagation for key frame only
-        for img, rot, tran, intrin, post_rot, post_tran in zip(
-                imgs, rots, trans, intrins, post_rots, post_trans):
+        for img, rot, tran, intrin, post_rot, post_tran, sensor2virtual, reference_height in zip(
+                imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights):
             if key_frame or self.with_prev:
                 if self.align_after_view_transfromation:
                     rot, tran = rots[0], trans[0]
                 mlp_input = self.img_view_transformer.get_mlp_input(
                     rots[0], trans[0], intrin, post_rot, post_tran, bda)
                 inputs_curr = (img, rot, tran, intrin, post_rot,
-                               post_tran, bda, mlp_input)
+                               post_tran, sensor2virtual, reference_height, bda, mlp_input)
                 if key_frame:
                     bev_feat, depth = self.prepare_bev_feat(*inputs_curr)
                 else:
@@ -431,7 +435,7 @@ class BEVDet4D(BEVDet):
             bda_curr = bda.repeat(self.num_frame - 1, 1, 1)
             return feat_prev, [
                 imgs[0], rots_curr, trans_curr, intrins[0], rots_prev,
-                trans_prev, post_rots[0], post_trans[0], bda_curr
+                trans_prev, post_rots[0], post_trans[0], sensor2virtuals[0], reference_heights[0], bda_curr
             ]
         if self.align_after_view_transfromation:
             for adj_id in range(1, self.num_frame):
@@ -448,11 +452,11 @@ class BEVDet4D(BEVDet):
 class BEVDepth(BEVDet):
     def extract_img_feat(self, img, img_metas, **kwargs):
         """Extract features of images."""
-        _, rot, tran, intrin, post_rot, post_tran, bda = img
+        _, rot, tran, intrin, post_rot, post_tran, sensor2virtuals, reference_heights, bda = img
         x = self.image_encoder(img[0])
         mlp_input = self.img_view_transformer.get_mlp_input(
                     rot, tran, intrin, post_rot, post_tran, bda)
-        x, depth = self.img_view_transformer([x, rot, tran, intrin, post_rot, post_tran, bda, mlp_input])
+        x, depth = self.img_view_transformer([x, rot, tran, intrin, post_rot, post_tran, bda, sensor2virtuals, reference_heights, mlp_input])
         x = self.bev_encoder(x)
         return [x], depth
 
