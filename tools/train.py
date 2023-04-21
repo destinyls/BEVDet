@@ -121,7 +121,19 @@ def clean_state_dict(state_dict):
         if k[:9] == 'img_neck.':
             new_state_dict[k] = v
         if k[:21] == 'img_view_transformer.':
-            new_state_dict[k] = v    
+            new_state_dict[k] = v
+    return new_state_dict
+
+def clean_state_dict_v2(state_dict):
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        if k[:25] == 'img_bev_encoder_backbone.':
+            continue
+        if k[:21] == 'img_bev_encoder_neck.':
+            continue
+        if k[:16] == 'pre_process_net.':
+            continue
+        new_state_dict[k] = v
     return new_state_dict
 
 def load_checkpoints(model, ckpt_path):
@@ -131,7 +143,7 @@ def load_checkpoints(model, ckpt_path):
         state_dict = checkpoints['state_dict']
     else:
         state_dict = checkpoints
-    state_dict = clean_state_dict(checkpoints['state_dict'])
+    state_dict = clean_state_dict_v2(checkpoints['state_dict'])
     model.load_state_dict(state_dict, strict=False)
 
 def enable_frozen_layers(model):
@@ -265,8 +277,9 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
-    load_checkpoints(model, "/data/bevdet_pretrained_model/bevdet4d-2-r50-depth-cbgs.pth")
-    enable_frozen_layers(model)
+    if cfg.use_height:
+        load_checkpoints(model, cfg.use_height)
+        enable_frozen_layers(model)
     
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
