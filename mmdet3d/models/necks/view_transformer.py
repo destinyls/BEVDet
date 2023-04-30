@@ -356,7 +356,7 @@ class LSSViewTransformer(BaseModule):
                 bev_feat = self.voxel_pooling_v2(
                     coor, depth.view(B, N, self.D, H, W),
                     tran_feat.view(B, N, tran_feat.shape[-3], H, W))
-                bev_feat = self.dh_fusion(bev_feat, bev_feat).contiguous()
+                bev_feat = self.dh_fusion(bev_feat, bev_feat_height).contiguous()
             else:
                 coor = self.get_lidar_coor(*input[1:9])
                 bev_feat = self.voxel_pooling_v2(

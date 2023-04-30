@@ -43,6 +43,7 @@ voxel_size = [0.1, 0.1, 0.2]
 use_height = True
 numC_Trans = 80
 numC_Trans_Bev= 160 if use_height else 80
+pretrained_model = "pretrained_model/epoch_18_ema.pth"
 
 multi_adj_frame_id_cfg = (1, 1+1, 1)
 
