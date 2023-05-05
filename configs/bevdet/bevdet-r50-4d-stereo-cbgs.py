@@ -1,25 +1,53 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
-
-# mAP: 0.2828
-# mATE: 0.7734
-# mASE: 0.2884
-# mAOE: 0.6976
-# mAVE: 0.8637
-# mAAE: 0.2908
-# NDS: 0.3500
+# align_after_view_transfromation=True
+# mAP: 0.3820
+# mATE: 0.5837
+# mASE: 0.2791
+# mAOE: 0.4730
+# mAVE: 0.3824
+# mAAE: 0.2064
+# NDS: 0.4986
+# Eval time: 137.5s
 #
 # Per-class results:
-# Object Class	AP	ATE	ASE	AOE	AVE	AAE
-# car	0.517	0.533	0.161	0.123	0.909	0.235
-# truck	0.226	0.745	0.232	0.222	0.848	0.268
-# bus	0.305	0.797	0.220	0.192	1.982	0.355
-# trailer	0.101	1.107	0.230	0.514	0.536	0.068
-# construction_vehicle	0.039	1.105	0.501	1.402	0.119	0.386
-# pedestrian	0.318	0.805	0.305	1.341	0.826	0.650
-# motorcycle	0.216	0.783	0.286	0.977	1.224	0.273
-# bicycle	0.203	0.712	0.304	1.354	0.465	0.090
-# traffic_cone	0.499	0.547	0.347	nan	nan	nan
-# barrier	0.404	0.599	0.297	0.153	nan	nan
+# Object Class    AP      ATE     ASE     AOE     AVE     AAE
+# car     0.597   0.428   0.155   0.091   0.304   0.193
+# truck   0.311   0.599   0.215   0.103   0.287   0.201
+# bus     0.373   0.679   0.210   0.090   0.941   0.355
+# trailer 0.169   0.925   0.236   0.458   0.327   0.086
+# construction_vehicle    0.114   0.784   0.491   0.954   0.103   0.318
+# pedestrian      0.426   0.654   0.304   0.797   0.502   0.245
+# motorcycle      0.350   0.571   0.266   0.647   0.436   0.243
+# bicycle 0.318   0.426   0.270   0.990   0.160   0.011
+# traffic_cone    0.587   0.382   0.342   nan     nan     nan
+# barrier 0.575   0.389   0.302   0.127   nan     nan
+
+
+# align_after_view_transfromation=False
+# mAP: 0.3836
+# mATE: 0.5815
+# mASE: 0.2790
+# mAOE: 0.4750
+# mAVE: 0.3807
+# mAAE: 0.2067
+# NDS: 0.4995
+# Eval time: 144.4s
+#
+# Per-class results:
+# Object Class    AP      ATE     ASE     AOE     AVE     AAE
+# car     0.597   0.426   0.155   0.091   0.304   0.194
+# truck   0.311   0.599   0.215   0.102   0.285   0.201
+# bus     0.373   0.673   0.210   0.090   0.955   0.361
+# trailer 0.170   0.921   0.236   0.449   0.323   0.085
+# construction_vehicle    0.115   0.790   0.490   0.978   0.102   0.322
+# pedestrian      0.428   0.651   0.304   0.792   0.498   0.242
+# motorcycle      0.351   0.572   0.265   0.654   0.422   0.239
+# bicycle 0.322   0.423   0.270   0.994   0.157   0.010
+# traffic_cone    0.588   0.376   0.343   nan     nan     nan
+# barrier 0.580   0.383   0.302   0.125   nan     nan
+
+
+
 
 _base_ = ['../_base_/datasets/nus-3d.py', '../_base_/default_runtime.py']
 # Global
@@ -60,16 +88,20 @@ grid_config = {
 
 voxel_size = [0.1, 0.1, 0.2]
 
-numC_Trans = 64
+numC_Trans = 80
+
+multi_adj_frame_id_cfg = (1, 1+1, 1)
 
 model = dict(
-    type='BEVDet',
+    type='BEVStereo4D',
+    align_after_view_transfromation=False,
+    num_adj=len(range(*multi_adj_frame_id_cfg)),
     img_backbone=dict(
         pretrained='torchvision://resnet50',
         type='ResNet',
         depth=50,
         num_stages=4,
-        out_indices=(2, 3),
+        out_indices=(0, 2, 3),
         frozen_stages=-1,
         norm_cfg=dict(type='BN', requires_grad=True),
         norm_eval=False,
@@ -83,20 +115,32 @@ model = dict(
         start_level=0,
         out_ids=[0]),
     img_view_transformer=dict(
-        type='LSSViewTransformer',
+        type='LSSViewTransformerBEVStereo',
         grid_config=grid_config,
         input_size=data_config['input_size'],
         in_channels=256,
         out_channels=numC_Trans,
+        sid=True,
+        depthnet_cfg=dict(use_dcn=False,
+                          aspp_mid_channels=96,
+                          stereo=True,
+                          bias=5.),
         downsample=16),
     img_bev_encoder_backbone=dict(
         type='CustomResNet',
-        numC_input=numC_Trans,
+        numC_input=numC_Trans * (len(range(*multi_adj_frame_id_cfg))+1),
         num_channels=[numC_Trans * 2, numC_Trans * 4, numC_Trans * 8]),
     img_bev_encoder_neck=dict(
         type='FPN_LSS',
         in_channels=numC_Trans * 8 + numC_Trans * 2,
         out_channels=256),
+    pre_process=dict(
+        type='CustomResNet',
+        numC_input=numC_Trans,
+        num_layer=[2,],
+        num_channels=[numC_Trans,],
+        stride=[1,],
+        backbone_output_ids=[0,]),
     pts_bbox_head=dict(
         type='CenterHead',
         in_channels=256,
@@ -122,8 +166,8 @@ model = dict(
             code_size=9),
         separate_head=dict(
             type='SeparateHead', init_bias=-2.19, final_kernel=3),
-        loss_cls=dict(type='GaussianFocalLoss', reduction='mean'),
-        loss_bbox=dict(type='L1Loss', reduction='mean', loss_weight=0.25),
+        loss_cls=dict(type='GaussianFocalLoss', reduction='mean', loss_weight=6.),
+        loss_bbox=dict(type='L1Loss', reduction='mean', loss_weight=1.5),
         norm_bbox=True),
     # model training and testing settings
     train_cfg=dict(
@@ -136,7 +180,7 @@ model = dict(
             gaussian_overlap=0.1,
             max_objs=500,
             min_radius=2,
-            code_weights=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.2, 0.2])),
+            code_weights=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])),
     test_cfg=dict(
         pts=dict(
             pc_range=point_cloud_range[:2],
@@ -174,20 +218,29 @@ train_pipeline = [
     dict(
         type='PrepareImageInputs',
         is_train=True,
-        data_config=data_config),
+        data_config=data_config,
+        sequential=True),
     dict(
         type='LoadAnnotationsBEVDepth',
         bda_aug_conf=bda_aug_conf,
         classes=class_names),
+    dict(
+        type='LoadPointsFromFile',
+        coord_type='LIDAR',
+        load_dim=5,
+        use_dim=5,
+        file_client_args=file_client_args),
+    dict(type='PointToMultiViewDepth', downsample=1, grid_config=grid_config),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectNameFilter', classes=class_names),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(
-        type='Collect3D', keys=['img_inputs', 'gt_bboxes_3d', 'gt_labels_3d'])
+        type='Collect3D', keys=['img_inputs', 'gt_bboxes_3d', 'gt_labels_3d',
+                                'gt_depth'])
 ]
 
 test_pipeline = [
-    dict(type='PrepareImageInputs', data_config=data_config),
+    dict(type='PrepareImageInputs', data_config=data_config, sequential=True),
     dict(
         type='LoadAnnotationsBEVDepth',
         bda_aug_conf=bda_aug_conf,
@@ -224,7 +277,9 @@ share_data_config = dict(
     type=dataset_type,
     classes=class_names,
     modality=input_modality,
-    img_info_prototype='bevdet',
+    stereo=True,
+    img_info_prototype='bevdet4d',
+    multi_adj_frame_id_cfg=multi_adj_frame_id_cfg,
 )
 
 test_data_config = dict(
@@ -235,6 +290,8 @@ data = dict(
     samples_per_gpu=8,
     workers_per_gpu=4,
     train=dict(
+        type='CBGSDataset',
+        dataset=dict(
         data_root=data_root,
         ann_file=data_root + 'bevdetv2-nuscenes_infos_train.pkl',
         pipeline=train_pipeline,
@@ -243,29 +300,34 @@ data = dict(
         use_valid_flag=True,
         # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
         # and box_type_3d='Depth' in sunrgbd and scannet dataset.
-        box_type_3d='LiDAR'),
+        box_type_3d='LiDAR')),
     val=test_data_config,
     test=test_data_config)
 
-for key in ['train', 'val', 'test']:
+for key in ['val', 'test']:
     data[key].update(share_data_config)
+data['train']['dataset'].update(share_data_config)
 
 # Optimizer
-optimizer = dict(type='AdamW', lr=2e-4, weight_decay=1e-07)
+optimizer = dict(type='AdamW', lr=2e-4, weight_decay=1e-2)
 optimizer_config = dict(grad_clip=dict(max_norm=5, norm_type=2))
 lr_config = dict(
     policy='step',
     warmup='linear',
     warmup_iters=200,
     warmup_ratio=0.001,
-    step=[24,])
-runner = dict(type='EpochBasedRunner', max_epochs=24)
+    step=[20,])
+runner = dict(type='EpochBasedRunner', max_epochs=20)
 
 custom_hooks = [
     dict(
         type='MEGVIIEMAHook',
         init_updates=10560,
         priority='NORMAL',
+    ),
+    dict(
+        type='SequentialControlHook',
+        temporal_start_epoch=2,
     ),
 ]
 

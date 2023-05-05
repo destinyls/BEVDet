@@ -3,8 +3,10 @@
 ![Illustrating the performance of the proposed BEVDet on the nuScenes val set](./resources/nds-fps.png)
 
 ## News
-
-- **2022.01.12** Support TensorRT-INT8.
+- **2023.04.28** Support task of [occupancy prediction](https://github.com/CVPR2023-3D-Occupancy-Prediction/CVPR2023-3D-Occupancy-Prediction) .
+- **2023.04.27** Equip BEVDet with stereo depth estimation.
+- **2023.04.10** Use single head for multi-class prediction.
+- **2023.01.12** Support TensorRT-INT8.
 - **2022.11.24** A new branch of bevdet codebase, dubbed dev2.0, is released. dev2.0 includes the following features:
 
 1. support **BEVPoolv2**, whose inference speed is up to **15.1 times** the previous fastest implementation of Lift-Splat-Shoot view transformer. It is also far less memory consumption.
@@ -20,44 +22,95 @@
 - [History](./docs/en/news.md)
 
 ## Main Results
-
-| Config                                                                    | mAP        | NDS        | FPS  | Model                                                                                          | Log                                                                                            |
-| ------------------------------------------------------------------------- | ---------- | ---------- | ---- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| [**BEVDet-R50**](configs/bevdet/bevdet-r50.py)                            | 27.8       | 32.2       | 18.7 | [google](https://drive.google.com/drive/folders/1Dh2FbEChbfhIaBHimPP4jbibs8XjJ5rx?usp=sharing) | [google](https://drive.google.com/drive/folders/1Dh2FbEChbfhIaBHimPP4jbibs8XjJ5rx?usp=sharing) |
-| [**BEVDet-R50-CBGS**](configs/bevdet/bevdet-r50-cbgs.py)                  | 30.7       | 38.2       | 18.7 | [google](https://drive.google.com/drive/folders/1Dh2FbEChbfhIaBHimPP4jbibs8XjJ5rx?usp=sharing) | [google](https://drive.google.com/drive/folders/1Dh2FbEChbfhIaBHimPP4jbibs8XjJ5rx?usp=sharing) |
-| [**BEVDet-R50-4D-Depth-CBGS**](configs/bevdet/bevdet4d-r50-depth-cbgs.py) | 40.2/40.6# | 52.3/52.6# | 16.4 | [google](https://drive.google.com/drive/folders/1Dh2FbEChbfhIaBHimPP4jbibs8XjJ5rx?usp=sharing) | [google](https://drive.google.com/drive/folders/1Dh2FbEChbfhIaBHimPP4jbibs8XjJ5rx?usp=sharing) |
+### Nuscenes Detection
+| Config                                                                    | mAP        | NDS        | Latency(ms) | FPS  | Model                                                                                          | Log                                                                                            |
+| ------------------------------------------------------------------------- | ---------- | ---------- | ---- | ---- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [**BEVDet-R50**](configs/bevdet/bevdet-r50.py)                            | 28.3       | 35.0       | 29.1/4.2/33.3| 30.7 | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+| [**BEVDet-R50-CBGS**](configs/bevdet/bevdet-r50-cbgs.py)                  | 31.3       | 39.8       |28.9/4.3/33.2 |30.1 | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+| [**BEVDet-R50-4D-CBGS**](configs/bevdet/bevdet-r50-4d-cbgs.py) | 31.4/35.4# | 44.7/44.9# | 29.1/4.3/33.4|30.0 | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |[baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1)|
+| [**BEVDet-R50-4D-Depth-CBGS**](configs/bevdet/bevdet-r50-4d-depth-cbgs.py) | 36.1/36.2# | 48.3/48.4# |35.7/4.0/39.7 |25.2 | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+| [**BEVDet-R50-4D-Stereo-CBGS**](configs/bevdet/bevdet-r50-4d-stereo-cbgs.py) | 38.2/38.4# | 49.9/50.0# |-  |-  | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+| [**BEVDet-R50-4DLongterm-CBGS**](configs/bevdet/bevdet-r50-4dlongterm-cbgs.py) | 34.8/35.4# | 48.2/48.7# | 30.8/4.2/35.0|28.6 | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+| [**BEVDet-R50-4DLongterm-Depth-CBGS**](configs/bevdet/bevdet-r50-4d-depth-cbgs.py) | 39.4/39.9# | 51.5/51.9# |38.4/4.0/42.4 |23.6 | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+| [**BEVDet-STBase-4D-Stereo-512x1408-CBGS**](configs/bevdet/bevdet-stbase-4d-stereo-512x1408-cbgs.py) | 47.2# | 57.6# |-  |-  | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
 
 \# align previous frame bev feature during the view transformation.
 
-## Inference speed with different backends
+Depth: Depth supervised from Lidar as BEVDepth.
+
+Longterm: cat 8 history frame in temporal modeling. 1 by default. 
+
+Stereo: A private implementation that concat cost-volumn with image feature before executing model.view_transformer.depth_net.
+
+The latency includes Network/Post-Processing/Total. Training without CBGS is deprecated.
+
+
+### Nuscenes Occupancy
+| Config                                                                    | mIOU       | Model | Log                                                                                            |
+| ------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [**BEVDet-Occ-R50-4D-Stereo-2x**](configs/bevdet_occ/bevdet-occ-r50-4d-stereo-24e.py)                            | 36.1     | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+| [**BEVDet-Occ-STBase-4D-Stereo-2x**](configs/bevdet_occ/bevdet-occ-stbase-4d-stereo-512x1408-24e.py)                            | 42.0     | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) | [baidu](https://pan.baidu.com/s/1237QyV18zvRJ1pU3YzRItw?pwd=npe1) |
+## Inference latency with different backends
 
 | Backend       | 256x704 | 384x1056 | 512x1408 | 640x1760 |
 | ------------- | ------- | -------- | -------- | -------- |
-| PyTorch       | 37.9    | 64.7     | 105.7    | 154.2    |
-| TensorRT      | 18.4    | 25.9     | 40.0     | 58.3     |
-| TensorRT-FP16 | 7.2     | 10.6     | 15.3     | 21.2     |
-| TensorRT-INT8 | 4.4     | 5.8      | 8.2      | 11.0     |
+| PyTorch       | 28.9    | 49.7     | 78.7    | 113.4    |
+| TensorRT      | 14.0    | 22.8     | 36.5     | 53.0     |
+| TensorRT-FP16 | 4.94     | 7.96     | 12.4     | 17.9     |
+| TensorRT-INT8 | 2.93    | 4.41      | 6.58      | 9.19     |                                      
+| TensorRT-INT8(Xavier) | 25.0    | -      | -     | -    | 
 
-- Evaluate with [**BEVDet-R50**](configs/bevdet/bevdet-r50.py) on a RTX 3090 GPU. We omit the postprocessing, which runs about 14.3 ms with the PyTorch backend.
+- Evaluate with [**BEVDet-R50-CBGS**](configs/bevdet/bevdet-r50-cbgs.py) on a RTX 3090 GPU by default. We omit the postprocessing, which spends up to 5 ms with the PyTorch backend.
 
 ## Get Started
 
 #### Installation and Data Preparation
 
-1. Please refer to [getting_started.md](docs/en/getting_started.md) for installing BEVDet as mmdetection3d. [Docker](docker/Dockerfile) is recommended for environment preparation.
-2. Prepare nuScenes dataset as introduced in [nuscenes_det.md](docs/en/datasets/nuscenes_det.md) and create the pkl for BEVDet by running:
+step 1. Please prepare environment as that in [Docker](docker/Dockerfile).
 
+step 2. Prepare bevdet repo by.
+```shell script
+git clone https://github.com/HuangJunJie2017/BEVDet.git
+cd BEVDet
+pip install -v -e .
+```
+
+step 3. Prepare nuScenes dataset as introduced in [nuscenes_det.md](docs/en/datasets/nuscenes_det.md) and create the pkl for BEVDet by running:
 ```shell
 python tools/create_data_bevdet.py
+```
+step 4. For Occupancy Prediction task, download (only) the 'gts' from [CVPR2023-3D-Occupancy-Prediction](https://github.com/CVPR2023-3D-Occupancy-Prediction/CVPR2023-3D-Occupancy-Prediction) and arrange the folder as:
+```shell script
+└── nuscenes
+    ├── v1.0-trainval (existing)
+    ├── sweeps  (existing)
+    ├── samples (existing)
+    └── gts (new)
+```
+
+#### Train model
+```shell
+# single gpu
+python tools/train.py $config
+# multiple gpu
+./tools/dist_train.sh $config num_gpu
+```
+
+#### Test model
+```shell
+# single gpu
+python tools/test.py $config $checkpoint --eval mAP
+# multiple gpu
+./tools/dist_test.sh $config $checkpoint num_gpu --eval mAP
 ```
 
 #### Estimate the inference speed of BEVDet
 
 ```shell
 # with pre-computation acceleration
-python tools/analysis_tools/benchmark.py $config $checkpoint
+python tools/analysis_tools/benchmark.py $config $checkpoint --fuse-conv-bn
 # 4D with pre-computation acceleration
-python tools/analysis_tools/benchmark_sequential.py $config $checkpoint
+python tools/analysis_tools/benchmark_sequential.py $config $checkpoint --fuse-conv-bn
 # view transformer only
 python tools/analysis_tools/benchmark_view_transformer.py $config $checkpoint
 ```

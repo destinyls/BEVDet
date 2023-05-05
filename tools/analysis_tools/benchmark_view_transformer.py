@@ -55,6 +55,10 @@ def main():
     if not args.no_acceleration:
         cfg.model.img_view_transformer.accelerate=True
     cfg.model.train_cfg = None
+    assert cfg.model.type == 'BEVDet', \
+        'Please use class BEVDet for ' \
+        'view transformation inference ' \
+        'speed estimation instead of %s'% cfg.model.type
     model = build_detector(cfg.model, test_cfg=cfg.get('test_cfg'))
     load_checkpoint(model, args.checkpoint, map_location='cpu')
     model = MMDataParallel(model, device_ids=[0])
@@ -72,7 +76,7 @@ def main():
     for i, data in enumerate(data_loader):
 
         with torch.no_grad():
-            img_feat = \
+            img_feat, _ = \
                 model.module.image_encoder(data['img_inputs'][0][0].cuda())
             B, N, C, H, W = img_feat.shape
             x = depth_net(img_feat.reshape(B * N, C, H, W))
