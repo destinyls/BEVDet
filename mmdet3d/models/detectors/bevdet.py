@@ -396,7 +396,6 @@ class BEVDet4D(BEVDet):
                          sequential=False,
                          **kwargs):
         if sequential:
-            print("-----------sequential----------")
             return self.extract_img_feat_sequential(img, kwargs['feat_prev'])
         imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, bda = \
             self.prepare_inputs(img)
@@ -509,6 +508,12 @@ class BEVDepth(BEVDet):
 
 @DETECTORS.register_module()
 class BEVDepth4D(BEVDet4D):
+    def __init__(self,
+                 use_height=1,
+                 **kwargs):
+        super(BEVDepth4D, self).__init__(**kwargs)
+        self.use_height = use_height
+
     def forward_train(self,
                       points=None,
                       img_metas=None,
@@ -548,10 +553,15 @@ class BEVDepth4D(BEVDet4D):
         img_feats, pts_feats, depth = self.extract_feat(
             points, img=img_inputs, img_metas=img_metas, **kwargs)
         gt_depth = kwargs['gt_depth']
-        loss_depth = self.img_view_transformer.get_depth_loss(gt_depth, depth)
-        losses = dict(loss_depth=loss_depth)
         losses_pts = self.forward_pts_train(img_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
                                             gt_bboxes_ignore)
-        losses.update(losses_pts)
+
+        if self.use_height in [0, 2]:
+            loss_depth = self.img_view_transformer.get_depth_loss(gt_depth, depth)
+            losses = dict(loss_depth=loss_depth)
+            losses.update(losses_pts)
+        else:
+            losses = losses_pts
+
         return losses

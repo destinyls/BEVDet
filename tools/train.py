@@ -279,7 +279,7 @@ def main():
     model.init_weights()
     
     
-    if cfg.use_height:
+    if cfg.use_height in [2]:
         load_checkpoints(model, cfg.pretrained_model)
         enable_frozen_layers(model)
 

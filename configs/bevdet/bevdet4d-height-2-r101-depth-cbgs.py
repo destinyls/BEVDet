@@ -49,6 +49,7 @@ multi_adj_frame_id_cfg = (1, 1+1, 1)
 
 model = dict(
     type='BEVDepth4D',
+    use_height=use_height,
     align_after_view_transfromation=False,
     num_adj=len(range(*multi_adj_frame_id_cfg)),
     img_backbone=dict(

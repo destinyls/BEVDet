@@ -347,22 +347,23 @@ class LSSViewTransformer(BaseModule):
 
             bev_feat = bev_feat.squeeze(2)
         else:
-            if self.use_height:
+            if self.use_height in [0, 2]:
+                coor = self.get_lidar_coor(*input[1:9])
+                bev_feat = self.voxel_pooling_v2(
+                    coor, depth.view(B, N, self.D, H, W),
+                    tran_feat.view(B, N, tran_feat.shape[-3], H, W))
+            if self.use_height in [1, 2]:
                 coor_height = self.get_lidar_coor_height(*input[1:9])
                 bev_feat_height = self.voxel_pooling_v2(
                     coor_height, height.view(B, N, self.H, H, W),
                     tran_feat.view(B, N, tran_feat.shape[-3], H, W))
-                coor = self.get_lidar_coor(*input[1:9])
-                bev_feat = self.voxel_pooling_v2(
-                    coor, depth.view(B, N, self.D, H, W),
-                    tran_feat.view(B, N, tran_feat.shape[-3], H, W))
-                bev_feat = self.dh_fusion(bev_feat, bev_feat_height).contiguous()
+            if self.use_height in [0]:
+                return bev_feat, depth
+            elif self.use_height in [1]:
+                return bev_feat_height, height
             else:
-                coor = self.get_lidar_coor(*input[1:9])
-                bev_feat = self.voxel_pooling_v2(
-                    coor, depth.view(B, N, self.D, H, W),
-                    tran_feat.view(B, N, tran_feat.shape[-3], H, W))
-        return bev_feat, depth
+                bev_feat = self.dh_fusion(bev_feat, bev_feat_height).contiguous()
+                return bev_feat, depth
 
     def view_transform(self, input, depth, height, tran_feat):
         if self.accelerate:
@@ -590,7 +591,7 @@ class DepthNet(nn.Module):
                  height_channels,
                  use_dcn=True,
                  use_aspp=True,
-                 use_height=False):
+                 use_height=0):
         super(DepthNet, self).__init__()
         
         self.use_height = use_height
@@ -603,38 +604,42 @@ class DepthNet(nn.Module):
         self.context_conv = nn.Conv2d(
             mid_channels, context_channels, kernel_size=1, stride=1, padding=0)
         self.bn = nn.BatchNorm1d(27)
-        self.depth_mlp = Mlp(27, mid_channels, mid_channels)
-        self.depth_se = SELayer(mid_channels)  # NOTE: add camera-aware
+        
         self.context_mlp = Mlp(27, mid_channels, mid_channels)
         self.context_se = SELayer(mid_channels)  # NOTE: add camera-aware
-        depth_conv_list = [
+        
+        if use_height in [0, 2]:
+            self.depth_mlp = Mlp(27, mid_channels, mid_channels)
+            self.depth_se = SELayer(mid_channels)  # NOTE: add camera-aware
+            
+            depth_conv_list = [
             BasicBlock(mid_channels, mid_channels),
             BasicBlock(mid_channels, mid_channels),
-            BasicBlock(mid_channels, mid_channels),
-        ]
-        if use_aspp:
-            depth_conv_list.append(ASPP(mid_channels, mid_channels))
-        if use_dcn:
+            BasicBlock(mid_channels, mid_channels),]
+            if use_aspp:
+                depth_conv_list.append(ASPP(mid_channels, mid_channels))
+            if use_dcn:
+                depth_conv_list.append(
+                    build_conv_layer(
+                        cfg=dict(
+                            type='DCN',
+                            in_channels=mid_channels,
+                            out_channels=mid_channels,
+                            kernel_size=3,
+                            padding=1,
+                            groups=4,
+                            im2col_step=128,
+                        )))
             depth_conv_list.append(
-                build_conv_layer(
-                    cfg=dict(
-                        type='DCN',
-                        in_channels=mid_channels,
-                        out_channels=mid_channels,
-                        kernel_size=3,
-                        padding=1,
-                        groups=4,
-                        im2col_step=128,
-                    )))
-        depth_conv_list.append(
-            nn.Conv2d(
-                mid_channels,
-                depth_channels,
-                kernel_size=1,
-                stride=1,
-                padding=0))
-        self.depth_conv = nn.Sequential(*depth_conv_list)
-        if use_height:
+                nn.Conv2d(
+                    mid_channels,
+                    depth_channels,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0))
+            self.depth_conv = nn.Sequential(*depth_conv_list)
+
+        if use_height in [1, 2]:
             self.height_layer = HeightLayer(mid_channels, height_channels, use_dcn, use_aspp)
         
     def forward(self, x, mlp_input):
@@ -643,15 +648,18 @@ class DepthNet(nn.Module):
         context_se = self.context_mlp(mlp_input)[..., None, None]
         context = self.context_se(x, context_se)
         context = self.context_conv(context)
-        depth_se = self.depth_mlp(mlp_input)[..., None, None]
-        depth = self.depth_se(x, depth_se)
-        depth = self.depth_conv(depth)
-        if self.use_height:
+        if self.use_height in [0, 2]:
+            depth_se = self.depth_mlp(mlp_input)[..., None, None]
+            depth = self.depth_se(x, depth_se)
+            depth = self.depth_conv(depth)
+        if self.use_height in [1, 2]:
             height = self.height_layer(x, mlp_input)
-            return torch.cat([depth, height, context], dim=1)
-        else:
+        if self.use_height in [0]:
             return torch.cat([depth, context], dim=1)
-
+        elif self.use_height in [1]:
+            return torch.cat([height, context], dim=1)
+        else:
+            return torch.cat([depth, height, context], dim=1)
 
 class DepthAggregation(nn.Module):
     """pixel cloud feature extraction."""
@@ -724,7 +732,7 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
         self.depth_net = DepthNet(self.in_channels, self.in_channels,
                                   self.out_channels, self.D, self.H, **depthnet_cfg)
         
-        if self.use_height:
+        if self.use_height in [2]:
             self.dh_fusion = DHFusion(channels=self.out_channels + self.H, num_heads=8, num_levels=1, num_layers=3)
 
     def get_mlp_input(self, rot, tran, intrin, post_rot, post_tran, bda):
@@ -807,10 +815,14 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
         x = self.depth_net(x, mlp_input)
         depth_digit = x[:, :self.D, ...]
         depth = depth_digit.softmax(dim=1)
-        if self.use_height:
+        if self.use_height in [2]:
             height = x[:, self.D : self.D+self.H, ...]
             tran_feat = x[:, self.D:self.D + self.H + self.out_channels, ...]
             return self.view_transform(input, depth, height, tran_feat)
-        else:
+        elif self.use_height in [0]:
             tran_feat = x[:, self.D:self.D + self.out_channels, ...]
             return self.view_transform(input, depth, depth, tran_feat)
+        elif self.use_height in [1]:
+            height = x[:, :self.H, ...]
+            tran_feat = x[:, self.H:self.H + self.out_channels, ...]
+            return self.view_transform(input, height, height, tran_feat)

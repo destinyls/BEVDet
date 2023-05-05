@@ -35,15 +35,15 @@ grid_config = {
     'y': [-51.2, 51.2, 0.8],
     'z': [-5, 3, 8],
     'depth': [1.0, 60.0, 0.5],
-    'height': [-2.0, 4.0, 80],
+    'height': [-4.0, 2.0, 80],
 }
 
 voxel_size = [0.1, 0.1, 0.2]
 
 find_unused_parameters = False
-use_height = True
+use_height = 1  # 0: BEVDepth  1: BEVHeight  2: BEVHeight++
 numC_Trans = 80
-numC_Trans_Bev= 160 if use_height else 80
+numC_Trans_Bev= 160 if use_height==2 else 80
 pretrained_model = "pretrained_model/epoch_20_ema.pth"
 
 multi_adj_frame_id_cfg = (1, 1+1, 1)
