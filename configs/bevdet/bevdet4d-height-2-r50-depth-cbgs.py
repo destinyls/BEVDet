@@ -35,7 +35,7 @@ grid_config = {
     'y': [-51.2, 51.2, 0.8],
     'z': [-5, 3, 8],
     'depth': [1.0, 60.0, 0.5],
-    'height': [-2.0, 4.0, 80],
+    'height': [-4.0, 2.0, 80],
 }
 
 voxel_size = [0.1, 0.1, 0.2]
@@ -268,7 +268,7 @@ lr_config = dict(
     warmup_iters=200,
     warmup_ratio=0.001,
     step=[20,])
-runner = dict(type='EpochBasedRunner', max_epochs=20)
+runner = dict(type='EpochBasedRunner', max_epochs=25)
 
 custom_hooks = [
     dict(
