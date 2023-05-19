@@ -1,0 +1,2 @@
+bash tools/dist_train.sh configs/bevdet_occ/bevdet-occ-r50-4d-stereo-24e.py 8
+bash tools/dist_test.sh configs/bevdet_occ/bevdet-occ-r50-4d-stereo-24e.py work_dirs/bevdet4d-2-r101-depth-cbgs/epoch_20_ema.pth 8 --eval mAP

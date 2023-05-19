@@ -1,14 +1,18 @@
 # Copyright (c) Phigent Robotics. All rights reserved.
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from mmcv.runner import force_fp32
 
 from mmdet3d.ops.bev_pool_v2.bev_pool import TRTBEVPoolv2
 from mmdet.models import DETECTORS
+from mmdet.models.backbones.resnet import BasicBlock
 from .. import builder
 from .centerpoint import CenterPoint
 from mmdet.models.backbones.resnet import ResNet
 
+
+BN_MOMENTUM = 0.1
 
 @DETECTORS.register_module()
 class BEVDet(CenterPoint):
@@ -31,10 +35,25 @@ class BEVDet(CenterPoint):
             builder.build_backbone(img_bev_encoder_backbone)
         self.img_bev_encoder_neck = builder.build_neck(img_bev_encoder_neck)
 
+        self.mask_encoder_1 = nn.Sequential(
+            nn.Conv2d(18, 256, kernel_size=3, stride=2, bias=False),
+            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        )
+        self.mask_encoder_2 = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, bias=False),
+            nn.BatchNorm2d(256, momentum=BN_MOMENTUM),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        )
+
     def image_encoder(self, img, stereo=False):
         imgs = img
         B, N, C, imH, imW = imgs.shape
         imgs = imgs.view(B * N, C, imH, imW)
+        mask = imgs[:, 3:, :, :]
+        imgs = imgs[:, :3, :, :]
         x = self.img_backbone(imgs)
         stereo_feat = None
         if stereo:
@@ -45,7 +64,13 @@ class BEVDet(CenterPoint):
             if type(x) in [list, tuple]:
                 x = x[0]
         _, output_dim, ouput_H, output_W = x.shape
+        
+        x_mask1 = self.mask_encoder_1(mask)
+        x_mask2 = self.mask_encoder_2(x_mask1)
         x = x.view(B, N, output_dim, ouput_H, output_W)
+        x_mask2 = x_mask2.view(B, N, output_dim, ouput_H, output_W)
+        x = x + x_mask2
+        stereo_feat = stereo_feat + x_mask1
         return x, stereo_feat
 
     @force_fp32()
@@ -569,9 +594,11 @@ class BEVStereo4D(BEVDepth4D):
         self.temporal_frame = self.num_frame
         self.num_frame += self.extra_ref_frames
 
+    
     def extract_stereo_ref_feat(self, x):
         B, N, C, imH, imW = x.shape
         x = x.view(B * N, C, imH, imW)
+        x = x[:, :3, :, :]
         if isinstance(self.img_backbone,ResNet):
             if self.img_backbone.deep_stem:
                 x = self.img_backbone.stem(x)
@@ -604,6 +631,11 @@ class BEVStereo4D(BEVDepth4D):
                          k2s_sensor, extra_ref_frame):
         if extra_ref_frame:
             stereo_feat = self.extract_stereo_ref_feat(img)
+            B, N, C, imH, imW = img.shape
+            img = img.view(B * N, C, imH, imW)
+            mask = img[:, 3:, :, :]
+            stereo_feat_mask = self.mask_encoder_1(mask)
+            stereo_feat = stereo_feat + stereo_feat_mask
             return None, None, stereo_feat
         x, stereo_feat = self.image_encoder(img, stereo=True)
         metas = dict(k2s_sensor=k2s_sensor,

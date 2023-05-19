@@ -1,9 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import os
+import cv2
 
 import mmcv
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from pyquaternion import Quaternion
 
@@ -834,6 +836,7 @@ class PrepareImageInputs(object):
         self.data_config = data_config
         self.normalize_img = mmlabNormalize
         self.sequential = sequential
+        self.cls_channels = 17
 
     def get_rot(self, h):
         return torch.Tensor([
@@ -947,11 +950,12 @@ class PrepareImageInputs(object):
             cam_data = results['curr']['cams'][cam_name]
             filename = cam_data['data_path']
             img = Image.open(filename)
+            filename_mask = filename.replace('samples', 'masks')
+            img_mask = Image.open(filename_mask)
+            
             post_rot = torch.eye(2)
             post_tran = torch.zeros(2)
-
             intrin = torch.Tensor(cam_data['cam_intrinsic'])
-
             sensor2ego, ego2global = \
                 self.get_sensor_transforms(results['curr'], cam_name)
             # image view augmentation (resize, crop, horizontal flip, rotate)
@@ -966,6 +970,14 @@ class PrepareImageInputs(object):
                                    crop=crop,
                                    flip=flip,
                                    rotate=rotate)
+            img_mask, _, _ = \
+                self.img_transform(img_mask, post_rot,
+                                   post_tran,
+                                   resize=resize,
+                                   resize_dims=resize_dims,
+                                   crop=crop,
+                                   flip=flip,
+                                   rotate=rotate)
 
             # for convenience, make augmentation matrices 3x3
             post_tran = torch.zeros(3)
@@ -974,7 +986,11 @@ class PrepareImageInputs(object):
             post_rot[:2, :2] = post_rot2
 
             canvas.append(np.array(img))
-            imgs.append(self.normalize_img(img))
+            img = self.normalize_img(img)
+            img_mask = torch.tensor(np.array(img_mask))
+            img_mask = torch.where((img_mask < self.cls_channels + 1) & (img_mask >= 0), img_mask, torch.zeros_like(img_mask))
+            img_mask = F.one_hot(img_mask.long(), num_classes=self.cls_channels + 1).permute(2, 0, 1).contiguous().float()
+            imgs.append(torch.cat((img, img_mask), dim=0))
 
             if self.sequential:
                 assert 'adjacent' in results
@@ -987,7 +1003,19 @@ class PrepareImageInputs(object):
                         crop=crop,
                         flip=flip,
                         rotate=rotate)
-                    imgs.append(self.normalize_img(img_adjacent))
+                    img_adjacent = self.normalize_img(img_adjacent)
+                    filename_adj_mask = filename_adj.replace('samples', 'masks')
+                    img_adjacent_mask = Image.open(filename_adj_mask)
+                    img_adjacent_mask = self.img_transform_core(
+                        img_adjacent_mask,
+                        resize_dims=resize_dims,
+                        crop=crop,
+                        flip=flip,
+                        rotate=rotate)
+                    img_adjacent_mask = torch.tensor(np.array(img_adjacent_mask))
+                    img_adjacent_mask = torch.where((img_adjacent_mask < self.cls_channels + 1) & (img_adjacent_mask >= 0), img_adjacent_mask, torch.zeros_like(img_adjacent_mask))
+                    img_adjacent_mask = F.one_hot(img_adjacent_mask.long(), num_classes=self.cls_channels + 1).permute(2, 0, 1).contiguous().float()
+                    imgs.append(torch.cat((img, img_adjacent_mask), dim=0))
             intrins.append(intrin)
             sensor2egos.append(sensor2ego)
             ego2globals.append(ego2global)
