@@ -18,7 +18,7 @@ data_config = {
     ],
     'Ncams':
     6,
-    'input_size': (256, 704),
+    'input_size': (512, 1408),
     'src_size': (900, 1600),
 
     # Augmentation
@@ -40,22 +40,21 @@ grid_config = {
 
 voxel_size = [0.1, 0.1, 0.2]
 
-find_unused_parameters = False
 use_height = True
 numC_Trans = 80
 numC_Trans_Bev= 160 if use_height else 80
-pretrained_model = "/data/usr/lei.yang/BEVDetHeight/pretrained_model/bevdepth_2_R50_256x704_0.481.pth"
-# pretrained_model = "/model/work_dirs/bevdet4d-height-2-r50-depth-cbgs/epoch_16_ema.pth"
-multi_adj_frame_id_cfg = (1, 1+1, 1)
+pretrained_model = "/data/usr/lei.yang/BEVDetHeight/pretrained_model/bevdepth_3_R101_512x1408_0.537_ema.pth"
+
+multi_adj_frame_id_cfg = (1, 1+3, 1)
 
 model = dict(
     type='BEVDepth4D',
     align_after_view_transfromation=False,
     num_adj=len(range(*multi_adj_frame_id_cfg)),
     img_backbone=dict(
-        pretrained='torchvision://resnet50',
+        pretrained='torchvision://resnet101',
         type='ResNet',
-        depth=50,
+        depth=101,
         num_stages=4,
         out_indices=(2, 3),
         frozen_stages=-1,
@@ -238,7 +237,7 @@ test_data_config = dict(
     ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
 
 data = dict(
-    samples_per_gpu=4,
+    samples_per_gpu=2,
     workers_per_gpu=4,
     train=dict(
         type='CBGSDataset',
@@ -260,7 +259,7 @@ for key in ['val', 'test']:
 data['train']['dataset'].update(share_data_config)
 
 # Optimizer
-optimizer = dict(type='AdamW', lr=2e-4, weight_decay=1e-2)
+optimizer = dict(type='AdamW', lr=2e-5, weight_decay=1e-2)
 optimizer_config = dict(grad_clip=dict(max_norm=5, norm_type=2))
 lr_config = dict(
     policy='step',

@@ -81,6 +81,7 @@ def parse_args():
         help='Do not align after view transformer.')
     parser.add_argument(
         '--tmpdir',
+        default='/model/dist_test',
         help='tmp directory used for collecting results from multiple '
         'workers, available when gpu-collect is not specified')
     parser.add_argument('--seed', type=int, default=0, help='random seed')

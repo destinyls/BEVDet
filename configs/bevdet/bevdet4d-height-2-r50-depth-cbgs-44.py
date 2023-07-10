@@ -35,7 +35,7 @@ grid_config = {
     'y': [-51.2, 51.2, 0.8],
     'z': [-5, 3, 8],
     'depth': [1.0, 60.0, 0.5],
-    'height': [-4.0, 2.0, 80],
+    'height': [-4.0, 4.0, 80],
 }
 
 voxel_size = [0.1, 0.1, 0.2]
@@ -45,7 +45,7 @@ use_height = True
 numC_Trans = 80
 numC_Trans_Bev= 160 if use_height else 80
 pretrained_model = "/data/usr/lei.yang/BEVDetHeight/pretrained_model/bevdepth_2_R50_256x704_0.481.pth"
-# pretrained_model = "/model/work_dirs/bevdet4d-height-2-r50-depth-cbgs/epoch_16_ema.pth"
+
 multi_adj_frame_id_cfg = (1, 1+1, 1)
 
 model = dict(
@@ -239,7 +239,7 @@ test_data_config = dict(
 
 data = dict(
     samples_per_gpu=4,
-    workers_per_gpu=4,
+    workers_per_gpu=8,
     train=dict(
         type='CBGSDataset',
         dataset=dict(

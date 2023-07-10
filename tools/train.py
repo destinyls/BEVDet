@@ -146,6 +146,25 @@ def load_checkpoints(model, ckpt_path):
     state_dict = clean_state_dict(checkpoints['state_dict'])
     # state_dict = checkpoints['state_dict']
     model.load_state_dict(state_dict, strict=False)
+    
+def load_checkpoints_v2(model, bevdepth_path, bevheight_path):
+    device = torch.device("cpu")
+    depth_checkpoints = torch.load(bevdepth_path, map_location=device)
+    height_checkpoints = torch.load(bevheight_path, map_location=device)
+    if 'state_dict' in depth_checkpoints:
+        depth_state_dict = depth_checkpoints['state_dict']
+    else:
+        depth_state_dict = depth_checkpoints
+    if 'state_dict' in height_checkpoints:
+        height_state_dict = height_checkpoints['state_dict']
+    else:
+        height_state_dict = height_checkpoints
+    state_dict = clean_state_dict(depth_checkpoints['state_dict'])
+    
+    for k, v in height_state_dict.items():
+        if k[:43] == 'img_view_transformer.depth_net.height_layer':
+            state_dict[k] = v    
+    model.load_state_dict(state_dict, strict=False)
 
 def enable_frozen_layers(model):
     for p in model.img_backbone.parameters():
@@ -189,7 +208,7 @@ def main():
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
         # use config filename as default work_dir if cfg.work_dir is None
-        cfg.work_dir = osp.join('./work_dirs',
+        cfg.work_dir = osp.join('/model/work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from
@@ -278,11 +297,8 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
     
-    '''
     if cfg.use_height:
         load_checkpoints(model, cfg.pretrained_model)
-        enable_frozen_layers(model)
-    '''
 
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]

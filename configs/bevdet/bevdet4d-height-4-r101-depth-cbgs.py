@@ -35,7 +35,7 @@ grid_config = {
     'y': [-51.2, 51.2, 0.8],
     'z': [-5, 3, 8],
     'depth': [1.0, 60.0, 0.5],
-    'height': [-2.0, 4.0, 80],
+    'height': [-4.0, 2.0, 80],
 }
 
 voxel_size = [0.1, 0.1, 0.2]
@@ -43,9 +43,9 @@ voxel_size = [0.1, 0.1, 0.2]
 use_height = True
 numC_Trans = 80
 numC_Trans_Bev= 160 if use_height else 80
-pretrained_model = "pretrained_model/epoch_18_ema.pth"
+pretrained_model = "/data/usr/lei.yang/BEVDetHeight/pretrained_model/bevdepth_3_R101_512x1408_0.537_ema.pth"
 
-multi_adj_frame_id_cfg = (1, 1+1, 1)
+multi_adj_frame_id_cfg = (1, 1+4, 1)
 
 model = dict(
     type='BEVDepth4D',
@@ -156,7 +156,7 @@ model = dict(
 
 # Data
 dataset_type = 'NuScenesDataset'
-data_root = 'data/nuscenes/'
+data_root = '/data/public_dataset/nuscenes/'
 file_client_args = dict(backend='disk')
 
 bda_aug_conf = dict(
@@ -237,7 +237,7 @@ test_data_config = dict(
     ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
 
 data = dict(
-    samples_per_gpu=4,
+    samples_per_gpu=2,
     workers_per_gpu=4,
     train=dict(
         type='CBGSDataset',
@@ -259,7 +259,7 @@ for key in ['val', 'test']:
 data['train']['dataset'].update(share_data_config)
 
 # Optimizer
-optimizer = dict(type='AdamW', lr=5e-5, weight_decay=1e-2)
+optimizer = dict(type='AdamW', lr=2e-5, weight_decay=1e-2)
 optimizer_config = dict(grad_clip=dict(max_norm=5, norm_type=2))
 lr_config = dict(
     policy='step',

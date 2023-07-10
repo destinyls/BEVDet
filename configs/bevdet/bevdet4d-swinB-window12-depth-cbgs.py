@@ -18,7 +18,7 @@ data_config = {
     ],
     'Ncams':
     6,
-    'input_size': (256, 704),
+    'input_size': (896, 1600),
     'src_size': (900, 1600),
 
     # Augmentation
@@ -40,32 +40,39 @@ grid_config = {
 
 voxel_size = [0.1, 0.1, 0.2]
 
-find_unused_parameters = False
 use_height = True
 numC_Trans = 80
 numC_Trans_Bev= 160 if use_height else 80
-pretrained_model = "/data/usr/lei.yang/BEVDetHeight/pretrained_model/bevdepth_2_R50_256x704_0.481.pth"
-# pretrained_model = "/model/work_dirs/bevdet4d-height-2-r50-depth-cbgs/epoch_16_ema.pth"
-multi_adj_frame_id_cfg = (1, 1+1, 1)
+
+pretrained = '/data/usr/lei.yang/BEVDet/pretrained_model/swin_base_patch4_window12_384_22k.pth'
+pretrained_model = "/data/usr/lei.yang/BEVDetHeight/pretrained_model/bevdepth_8_swinB_896_1600_16_ema.pth"
+
+multi_adj_frame_id_cfg = (1, 1+8, 1)
 
 model = dict(
     type='BEVDepth4D',
     align_after_view_transfromation=False,
     num_adj=len(range(*multi_adj_frame_id_cfg)),
     img_backbone=dict(
-        pretrained='torchvision://resnet50',
-        type='ResNet',
-        depth=50,
-        num_stages=4,
+        type='SwinTransformer',
+        embed_dims=128,
+        depths=[2, 2, 18, 2],
+        num_heads=[4, 8, 16, 32],
+        window_size=12,
+        mlp_ratio=4,
+        qkv_bias=True,
+        qk_scale=None,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        drop_path_rate=0.2,
+        patch_norm=True,
         out_indices=(2, 3),
-        frozen_stages=-1,
-        norm_cfg=dict(type='BN', requires_grad=True),
-        norm_eval=False,
-        with_cp=True,
-        style='pytorch'),
+        with_cp=False,
+        convert_weights=True,
+        init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
     img_neck=dict(
         type='CustomFPN',
-        in_channels=[1024, 2048],
+        in_channels=[512, 1024],
         out_channels=512,
         num_outs=1,
         start_level=0,
@@ -238,13 +245,13 @@ test_data_config = dict(
     ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
 
 data = dict(
-    samples_per_gpu=4,
+    samples_per_gpu=1,
     workers_per_gpu=4,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
         data_root=data_root,
-        ann_file=data_root + 'bevdetv2-nuscenes_infos_train.pkl',
+        ann_file=data_root + 'bevdetv2-nuscenes_infos_trainval.pkl',
         pipeline=train_pipeline,
         classes=class_names,
         test_mode=False,
