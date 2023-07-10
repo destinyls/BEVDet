@@ -18,7 +18,7 @@ data_config = {
     ],
     'Ncams':
     6,
-    'input_size': (256, 704),
+    'input_size': (512, 1408),
     'src_size': (900, 1600),
 
     # Augmentation
@@ -41,16 +41,16 @@ voxel_size = [0.1, 0.1, 0.2]
 
 numC_Trans = 80
 
-multi_adj_frame_id_cfg = (1, 8+1, 1)
+multi_adj_frame_id_cfg = (1, 1+4, 1)
 
 model = dict(
     type='BEVDepth4D',
     align_after_view_transfromation=False,
     num_adj=len(range(*multi_adj_frame_id_cfg)),
     img_backbone=dict(
-        pretrained='torchvision://resnet50',
+        pretrained='torchvision://resnet101',
         type='ResNet',
-        depth=50,
+        depth=101,
         num_stages=4,
         out_indices=(2, 3),
         frozen_stages=-1,
@@ -234,7 +234,7 @@ test_data_config = dict(
 
 data = dict(
     samples_per_gpu=8,
-    workers_per_gpu=4,
+    workers_per_gpu=8,
     train=dict(
         type='CBGSDataset',
         dataset=dict(

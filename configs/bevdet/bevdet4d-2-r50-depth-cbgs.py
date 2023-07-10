@@ -41,7 +41,7 @@ voxel_size = [0.1, 0.1, 0.2]
 
 numC_Trans = 80
 
-multi_adj_frame_id_cfg = (1, 8+1, 1)
+multi_adj_frame_id_cfg = (1, 1+1, 1)
 
 model = dict(
     type='BEVDepth4D',
@@ -234,7 +234,7 @@ test_data_config = dict(
 
 data = dict(
     samples_per_gpu=8,
-    workers_per_gpu=4,
+    workers_per_gpu=8,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
@@ -263,7 +263,7 @@ lr_config = dict(
     warmup_iters=200,
     warmup_ratio=0.001,
     step=[20,])
-runner = dict(type='EpochBasedRunner', max_epochs=20)
+runner = dict(type='EpochBasedRunner', max_epochs=25)
 
 custom_hooks = [
     dict(

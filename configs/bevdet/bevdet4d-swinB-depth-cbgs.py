@@ -18,7 +18,7 @@ data_config = {
     ],
     'Ncams':
     6,
-    'input_size': (256, 704),
+    'input_size': (896, 1600),
     'src_size': (900, 1600),
 
     # Augmentation
@@ -42,25 +42,34 @@ voxel_size = [0.1, 0.1, 0.2]
 numC_Trans = 80
 
 multi_adj_frame_id_cfg = (1, 8+1, 1)
+pretrained = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/swin/swin_base_patch4_window7_224_22k_20220317-4f79f7c0.pth'  # noqa
+
+pretrained_model= '/model/work_dirs/bevdet4d-swinB-depth-cbgs/epoch_10_ema.pth'
 
 model = dict(
     type='BEVDepth4D',
     align_after_view_transfromation=False,
     num_adj=len(range(*multi_adj_frame_id_cfg)),
     img_backbone=dict(
-        pretrained='torchvision://resnet50',
-        type='ResNet',
-        depth=50,
-        num_stages=4,
+        type='SwinTransformer',
+        embed_dims=128,
+        depths=[2, 2, 18, 2],
+        num_heads=[4, 8, 16, 32],
+        window_size=7,
+        mlp_ratio=4,
+        qkv_bias=True,
+        qk_scale=None,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        drop_path_rate=0.2,
+        patch_norm=True,
         out_indices=(2, 3),
-        frozen_stages=-1,
-        norm_cfg=dict(type='BN', requires_grad=True),
-        norm_eval=False,
-        with_cp=True,
-        style='pytorch'),
+        with_cp=False,
+        convert_weights=True,
+        init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
     img_neck=dict(
         type='CustomFPN',
-        in_channels=[1024, 2048],
+        in_channels=[512, 1024],
         out_channels=512,
         num_outs=1,
         start_level=0,
@@ -233,13 +242,13 @@ test_data_config = dict(
     ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
 
 data = dict(
-    samples_per_gpu=8,
+    samples_per_gpu=1,
     workers_per_gpu=4,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
         data_root=data_root,
-        ann_file=data_root + 'bevdetv2-nuscenes_infos_train.pkl',
+        ann_file=data_root + 'bevdetv2-nuscenes_infos_trainval.pkl',
         pipeline=train_pipeline,
         classes=class_names,
         test_mode=False,
@@ -255,7 +264,7 @@ for key in ['val', 'test']:
 data['train']['dataset'].update(share_data_config)
 
 # Optimizer
-optimizer = dict(type='AdamW', lr=2e-4, weight_decay=1e-2)
+optimizer = dict(type='AdamW', lr=2e-5, weight_decay=1e-2)
 optimizer_config = dict(grad_clip=dict(max_norm=5, norm_type=2))
 lr_config = dict(
     policy='step',

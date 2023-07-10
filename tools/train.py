@@ -29,6 +29,11 @@ try:
 except ImportError:
     from mmdet3d.utils import setup_multi_processes
 
+def load_checkpoints(model, ckpt_path):
+    device = torch.device("cpu")
+    checkpoints = torch.load(ckpt_path, map_location=device)
+    state_dict = checkpoints['state_dict']
+    model.load_state_dict(state_dict, strict=False)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
@@ -133,7 +138,7 @@ def main():
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
         # use config filename as default work_dir if cfg.work_dir is None
-        cfg.work_dir = osp.join('./work_dirs',
+        cfg.work_dir = osp.join('/model/work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from
@@ -221,6 +226,7 @@ def main():
         train_cfg=cfg.get('train_cfg'),
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
+    # load_checkpoints(model, cfg.pretrained_model)
 
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
