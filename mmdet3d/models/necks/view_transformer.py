@@ -356,7 +356,10 @@ class LSSViewTransformer(BaseModule):
                 bev_feat = self.voxel_pooling_v2(
                     coor, depth.view(B, N, self.D, H, W),
                     tran_feat.view(B, N, tran_feat.shape[-3], H, W))
-                bev_feat = self.dh_fusion(bev_feat, bev_feat_height).contiguous()
+                if self.depth_query:
+                    bev_feat = self.dh_fusion(bev_feat, bev_feat_height).contiguous()
+                else:
+                    bev_feat = self.dh_fusion(bev_feat_height, bev_feat).contiguous()
             else:
                 coor = self.get_lidar_coor(*input[1:9])
                 bev_feat = self.voxel_pooling_v2(
@@ -590,7 +593,9 @@ class DepthNet(nn.Module):
                  height_channels,
                  use_dcn=True,
                  use_aspp=True,
-                 use_height=False):
+                 use_height=False,
+                 depth_query=True,
+                 num_layers=3):
         super(DepthNet, self).__init__()
         
         self.use_height = use_height
@@ -717,15 +722,26 @@ class DepthAggregation(nn.Module):
 @NECKS.register_module()
 class LSSViewTransformerBEVDepth(LSSViewTransformer):
 
-    def __init__(self, loss_depth_weight=3.0, depthnet_cfg=dict(), **kwargs):
+    def __init__(self, loss_depth_weight=3.0, depthnet_cfg=dict(), img_fusion=2, num_heads=8, **kwargs):
         super(LSSViewTransformerBEVDepth, self).__init__(**kwargs)
         self.use_height = depthnet_cfg['use_height']
+        self.depth_query = depthnet_cfg['depth_query']
+        self.img_fusion = img_fusion
+        
         self.loss_depth_weight = loss_depth_weight
         self.depth_net = DepthNet(self.in_channels, self.in_channels,
                                   self.out_channels, self.D, self.H, **depthnet_cfg)
         
         if self.use_height:
-            self.dh_fusion = DHFusion(channels=self.out_channels + self.H, num_heads=8, num_levels=1, num_layers=3)
+            if self.img_fusion == 0:
+                channels = self.out_channels
+            elif self.img_fusion == 1:
+                channels = self.out_channels + self.D
+            elif self.img_fusion == 2:
+                channels = self.out_channels + self.H
+            elif self.img_fusion == 3:
+                channels = self.out_channels + self.D + self.H
+            self.dh_fusion = DHFusion(channels=channels, num_heads=num_heads, num_levels=1, num_layers=depthnet_cfg['num_layers'])
 
     def get_mlp_input(self, rot, tran, intrin, post_rot, post_tran, bda):
         B, N, _, _ = rot.shape
@@ -809,7 +825,16 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
         depth = depth_digit.softmax(dim=1)
         if self.use_height:
             height = x[:, self.D : self.D+self.H, ...]
-            tran_feat = x[:, self.D:self.D + self.H + self.out_channels, ...]
+            if self.img_fusion == 2:
+                tran_feat = x[:, self.D:self.D + self.H + self.out_channels, ...]
+            elif self.img_fusion == 3:
+                tran_feat = x[:, :self.D + self.H + self.out_channels, ...]
+            elif self.img_fusion == 1:
+                tran_feat = x[:, self.D + self.H:self.D + self.H + self.out_channels, ...]
+                depth = x[:, :self.D, ...]
+                tran_feat = torch.cat([depth, tran_feat], dim=1)
+            else:
+                tran_feat = x[:, self.D+self.H:self.D + self.H + self.out_channels, ...]
             return self.view_transform(input, depth, height, tran_feat)
         else:
             tran_feat = x[:, self.D:self.D + self.out_channels, ...]

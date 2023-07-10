@@ -42,8 +42,8 @@ voxel_size = [0.1, 0.1, 0.2]
 
 find_unused_parameters = False
 use_height = True
-img_fusion = 3  # 0 for None, 1 for depth, 2 for height, 3 for depth and height
-num_heads = 8
+img_fusion = 1  # 0 for None, 1 for depth, 2 for height, 3 for depth and height
+num_heads = 9
 numC_Trans = 80
 numC_Trans_Bev = numC_Trans
 if use_height:
@@ -274,7 +274,7 @@ for key in ['val', 'test']:
 data['train']['dataset'].update(share_data_config)
 
 # Optimizer
-optimizer = dict(type='AdamW', lr=2e-5, weight_decay=1e-2)
+optimizer = dict(type='AdamW', lr=2e-4, weight_decay=1e-2)
 optimizer_config = dict(grad_clip=dict(max_norm=5, norm_type=2))
 lr_config = dict(
     policy='step',

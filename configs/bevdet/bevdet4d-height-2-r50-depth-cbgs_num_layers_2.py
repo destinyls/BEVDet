@@ -35,27 +35,15 @@ grid_config = {
     'y': [-51.2, 51.2, 0.8],
     'z': [-5, 3, 8],
     'depth': [1.0, 60.0, 0.5],
-    'height': [-4.0, 2.0, 82],
+    'height': [-4.0, 2.0, 80],
 }
 
 voxel_size = [0.1, 0.1, 0.2]
 
 find_unused_parameters = False
 use_height = True
-img_fusion = 3  # 0 for None, 1 for depth, 2 for height, 3 for depth and height
-num_heads = 8
 numC_Trans = 80
-numC_Trans_Bev = numC_Trans
-if use_height:
-    if img_fusion == 0:
-        numC_Trans_Bev = numC_Trans
-    elif img_fusion == 1:
-        numC_Trans_Bev = numC_Trans + 118
-    elif img_fusion == 2:
-        numC_Trans_Bev = numC_Trans + grid_config['height'][2]
-    elif img_fusion == 3:
-        numC_Trans_Bev = numC_Trans + grid_config['height'][2] + 118
-
+numC_Trans_Bev= 160 if use_height else 80
 pretrained_model = "/data/usr/lei.yang/BEVDetHeightAblation/pretrained_model/bevdepth_2_R50_256x704_0.481.pth"
 
 multi_adj_frame_id_cfg = (1, 1+1, 1)
@@ -88,9 +76,7 @@ model = dict(
         input_size=data_config['input_size'],
         in_channels=512,
         out_channels=numC_Trans,
-        depthnet_cfg=dict(use_dcn=False, use_height=use_height, depth_query=True, num_layers=3),
-        img_fusion=img_fusion,
-        num_heads=num_heads,
+        depthnet_cfg=dict(use_dcn=False, use_height=use_height, depth_query=True, num_layers=5),
         downsample=16),
     img_bev_encoder_backbone=dict(
         type='CustomResNet',
@@ -274,7 +260,7 @@ for key in ['val', 'test']:
 data['train']['dataset'].update(share_data_config)
 
 # Optimizer
-optimizer = dict(type='AdamW', lr=2e-5, weight_decay=1e-2)
+optimizer = dict(type='AdamW', lr=2e-4, weight_decay=1e-2)
 optimizer_config = dict(grad_clip=dict(max_norm=5, norm_type=2))
 lr_config = dict(
     policy='step',

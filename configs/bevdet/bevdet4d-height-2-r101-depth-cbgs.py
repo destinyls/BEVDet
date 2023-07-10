@@ -35,17 +35,17 @@ grid_config = {
     'y': [-51.2, 51.2, 0.8],
     'z': [-5, 3, 8],
     'depth': [1.0, 60.0, 0.5],
-    'height': [-2.0, 4.0, 80],
+    'height': [-4.0, 2.0, 80],
 }
 
 voxel_size = [0.1, 0.1, 0.2]
 
-use_height = True
+use_height = False
 numC_Trans = 80
 numC_Trans_Bev= 160 if use_height else 80
-pretrained_model = "pretrained_model/epoch_18_ema.pth"
+pretrained_model = "pretrained_model/bevdepth_3_R101_512x1408_0.537.pth"
 
-multi_adj_frame_id_cfg = (1, 1+1, 1)
+multi_adj_frame_id_cfg = (1, 1+2, 1)
 
 model = dict(
     type='BEVDepth4D',
@@ -237,7 +237,7 @@ test_data_config = dict(
     ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
 
 data = dict(
-    samples_per_gpu=4,
+    samples_per_gpu=1,
     workers_per_gpu=4,
     train=dict(
         type='CBGSDataset',
