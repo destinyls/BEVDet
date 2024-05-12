@@ -578,7 +578,7 @@ class HeightLayer(nn.Module):
         height_se = self.height_mlp(mlp_input)[..., None, None]
         height = self.height_se(x, height_se)
         height = self.height_conv(height)
-        return height.softmax(1)
+        return height
 
 
 class DepthNet(nn.Module):
@@ -813,16 +813,21 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
         B, N, C, H, W = x.shape
         x = x.view(B * N, C, H, W)
         x = self.depth_net(x, mlp_input)
-        depth_digit = x[:, :self.D, ...]
-        depth = depth_digit.softmax(dim=1)
+        
         if self.use_height in [2]:
-            height = x[:, self.D : self.D+self.H, ...]
+            depth_digit = x[:, :self.D, ...]
+            depth = depth_digit.softmax(dim=1)
+            height_digit = x[:, self.D : self.D+self.H, ...]
+            height = height_digit.softmax(dim=1)
             tran_feat = x[:, self.D:self.D + self.H + self.out_channels, ...]
             return self.view_transform(input, depth, height, tran_feat)
         elif self.use_height in [0]:
+            depth_digit = x[:, :self.D, ...]
+            depth = depth_digit.softmax(dim=1)
             tran_feat = x[:, self.D:self.D + self.out_channels, ...]
             return self.view_transform(input, depth, depth, tran_feat)
         elif self.use_height in [1]:
-            height = x[:, :self.H, ...]
+            height_digit = x[:, :self.H, ...]
+            height = height_digit.softmax(dim=1)
             tran_feat = x[:, self.H:self.H + self.out_channels, ...]
             return self.view_transform(input, height, height, tran_feat)

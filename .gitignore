@@ -121,6 +121,7 @@ mmdet3d/.mim
 
 # Pytorch
 *.pth
+*.out
 
 # demo
 *.jpg
@@ -130,6 +131,6 @@ data/scannet/scans/
 data/sunrgbd/OFFICIAL_SUNRGBD/
 *.obj
 *.ply
-
+work_dirs
 # Waymo evaluation
 mmdet3d/core/evaluation/waymo_utils/compute_detection_metrics_main
