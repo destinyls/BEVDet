@@ -114,7 +114,7 @@ class LSSViewTransformer(BaseModule):
         H_feat, W_feat = H_in // downsample, W_in // downsample
         alpha = 1.0
         h = np.arange(height_cfg[2]) / height_cfg[2]
-        h = np.power(h, alpha)
+        h = np.power(h, alpha)    
         h = height_cfg[0] + h * (height_cfg[1] - height_cfg[0])
         h = torch.tensor(h, dtype=torch.float).view(-1, 1, 1).expand(-1, H_feat, W_feat)
 
@@ -358,12 +358,12 @@ class LSSViewTransformer(BaseModule):
                     coor_height, height.view(B, N, self.H, H, W),
                     tran_feat.view(B, N, tran_feat.shape[-3], H, W))
             if self.use_height in [0]:
-                return bev_feat, depth
+                return bev_feat, depth, height
             elif self.use_height in [1]:
-                return bev_feat_height, height
+                return bev_feat_height, depth, height
             else:
                 bev_feat = self.dh_fusion(bev_feat, bev_feat_height).contiguous()
-                return bev_feat, depth
+                return bev_feat, depth, height
 
     def view_transform(self, input, depth, height, tran_feat):
         if self.accelerate:
@@ -791,6 +791,34 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
             gt_depths.long(), num_classes=self.D + 1).view(-1, self.D + 1)[:,
                                                                            1:]
         return gt_depths.float()
+    
+    def get_downsampled_gt_height(self, gt_heights):
+        """
+        Input:
+            gt_heights: [B, N, H, W]
+        Output:
+            gt_heights: [B*N*h*w, d]
+        """
+        B, N, H, W = gt_heights.shape
+        gt_heights = gt_heights.view(B * N, H // self.downsample,
+                                   self.downsample, W // self.downsample,
+                                   self.downsample, 1)
+        gt_heights = gt_heights.permute(0, 1, 3, 5, 2, 4).contiguous()
+        gt_heights = gt_heights.view(-1, self.downsample * self.downsample)
+        
+        gt_heights_tmp = torch.where(gt_heights == 0.0,
+                                    1e5 * torch.ones_like(gt_heights),
+                                    gt_heights)
+        gt_heights = torch.min(gt_heights_tmp, dim=-1).values
+        gt_heights = gt_heights.view(B * N, H // self.downsample,
+                                   W // self.downsample)
+
+        gt_heights = torch.floor((gt_heights - self.grid_config['height'][0]) * self.grid_config['height'][2] / (self.grid_config['height'][1] - self.grid_config['height'][0]))
+        gt_heights = torch.where((gt_heights < self.H + 1) & (gt_heights >= 0.0),
+                                gt_heights, torch.zeros_like(gt_heights))
+        gt_heights = F.one_hot(
+            gt_heights.long(), num_classes=self.H + 1).view(-1, self.H + 1)[:, 1:]
+        return gt_heights.float()
 
     @force_fp32()
     def get_depth_loss(self, depth_labels, depth_preds):
@@ -798,6 +826,7 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
         depth_preds = depth_preds.permute(0, 2, 3,
                                           1).contiguous().view(-1, self.D)
         fg_mask = torch.max(depth_labels, dim=1).values > 0.0
+
         depth_labels = depth_labels[fg_mask]
         depth_preds = depth_preds[fg_mask]
         with autocast(enabled=False):
@@ -807,6 +836,22 @@ class LSSViewTransformerBEVDepth(LSSViewTransformer):
                 reduction='none',
             ).sum() / max(1.0, fg_mask.sum())
         return self.loss_depth_weight * depth_loss
+    
+    @force_fp32()
+    def get_height_loss(self, height_labels, height_preds):
+        height_labels = self.get_downsampled_gt_height(height_labels)
+        height_preds = height_preds.permute(0, 2, 3,
+                                          1).contiguous().view(-1, self.H)
+        fg_mask = torch.max(height_labels, dim=1).values > 0.0
+        height_labels = height_labels[fg_mask]
+        height_preds = height_preds[fg_mask]
+        with autocast(enabled=False):
+            height_loss = F.binary_cross_entropy(
+                height_preds,
+                height_labels,
+                reduction='none',
+            ).sum() / max(1.0, fg_mask.sum())
+        return self.loss_depth_weight * height_loss
 
     def forward(self, input):
         (x, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights, bda, mlp_input) = input[:10]

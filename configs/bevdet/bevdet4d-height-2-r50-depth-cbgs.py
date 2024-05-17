@@ -41,7 +41,7 @@ grid_config = {
 voxel_size = [0.1, 0.1, 0.2]
 
 find_unused_parameters = False
-use_height = 1  # 0: BEVDepth  1: BEVHeight  2: BEVHeight++
+use_height = 2  # 0: BEVDepth  1: BEVHeight  2: BEVHeight++
 numC_Trans = 80
 numC_Trans_Bev= 160 if use_height==2 else 80
 pretrained_model = "pretrained_model/epoch_20_ema.pth"
@@ -52,6 +52,7 @@ model = dict(
     type='BEVDepth4D',
     align_after_view_transfromation=False,
     num_adj=len(range(*multi_adj_frame_id_cfg)),
+    use_height=use_height,
     img_backbone=dict(
         pretrained='torchvision://resnet50',
         type='ResNet',
@@ -188,7 +189,7 @@ train_pipeline = [
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(
         type='Collect3D', keys=['img_inputs', 'gt_bboxes_3d', 'gt_labels_3d',
-                                'gt_depth'])
+                                'gt_depth', 'gt_height'])
 ]
 
 test_pipeline = [
@@ -238,8 +239,8 @@ test_data_config = dict(
     ann_file=data_root + 'bevdetv2-nuscenes_infos_val.pkl')
 
 data = dict(
-    samples_per_gpu=8,
-    workers_per_gpu=16,
+    samples_per_gpu=4,
+    workers_per_gpu=8,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
@@ -281,5 +282,7 @@ custom_hooks = [
         temporal_start_epoch=3,
     ),
 ]
+
+evaluation = dict(interval=2)
 
 # fp16 = dict(loss_scale='dynamic')

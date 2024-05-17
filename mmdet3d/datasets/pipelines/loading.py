@@ -776,12 +776,34 @@ class PointToMultiViewDepth(object):
         coor = coor.to(torch.long)
         depth_map[coor[:, 1], coor[:, 0]] = depth
         return depth_map
+    
+    def points2heightmap(self, points, height, width):
+        height, width = height // self.downsample, width // self.downsample
+        # height_map = torch.zeros((height, width), dtype=torch.float32)
+        height_map = torch.zeros((height, width), dtype=torch.float32)
+        coor = torch.round(points[:, :2] / self.downsample)
+        delta_height = points[:, 2]
+        kept1 = (coor[:, 0] >= 0) & (coor[:, 0] < width) & (
+            coor[:, 1] >= 0) & (coor[:, 1] < height) & (
+                delta_height < self.grid_config['height'][1]) & (
+                    delta_height >= self.grid_config['height'][0])
+        coor, delta_height = coor[kept1], delta_height[kept1]
+        ranks = coor[:, 0] + coor[:, 1] * width
+        sort = (ranks + delta_height / 100.).argsort()
+        coor, delta_height, ranks = coor[sort], delta_height[sort], ranks[sort]
+
+        kept2 = torch.ones(coor.shape[0], device=coor.device, dtype=torch.bool)
+        kept2[1:] = (ranks[1:] != ranks[:-1])
+        coor, delta_height = coor[kept2], delta_height[kept2]
+        coor = coor.to(torch.long)
+        height_map[coor[:, 1], coor[:, 0]] = delta_height
+        return height_map
 
     def __call__(self, results):
         points_lidar = results['points']
         imgs, rots, trans, intrins = results['img_inputs'][:4]
-        post_rots, post_trans, sensor2virtuals, reference_heights, bda = results['img_inputs'][4:]
-        depth_map_list = []
+        post_rots, post_trans, cam2virtual, reference_heights, bda = results['img_inputs'][4:]
+        depth_map_list, height_map_list = [], []
         for cid in range(len(results['cam_names'])):
             cam_name = results['cam_names'][cid]
             lidar2lidarego = np.eye(4, dtype=np.float32)
@@ -815,22 +837,43 @@ class PointToMultiViewDepth(object):
             cam2img = np.eye(4, dtype=np.float32)
             cam2img = torch.from_numpy(cam2img)
             cam2img[:3, :3] = intrins[cid]
-
+            
             lidar2cam = torch.inverse(camego2global.matmul(cam2camego)).matmul(
                 lidarego2global.matmul(lidar2lidarego))
             lidar2img = cam2img.matmul(lidar2cam)
             points_img = points_lidar.tensor[:, :3].matmul(
                 lidar2img[:3, :3].T) + lidar2img[:3, 3].unsqueeze(0)
-            points_img = torch.cat(
+            ''' depth_map '''
+            points_img_depth = torch.cat(
                 [points_img[:, :2] / points_img[:, 2:3], points_img[:, 2:3]],
                 1)
-            points_img = points_img.matmul(
+
+            points_img_depth = points_img_depth.matmul(
                 post_rots[cid].T) + post_trans[cid:cid + 1, :]
-            depth_map = self.points2depthmap(points_img, imgs.shape[2],
+            depth_map = self.points2depthmap(points_img_depth, imgs.shape[2],
                                              imgs.shape[3])
             depth_map_list.append(depth_map)
+            ''' height_map '''
+            lidar2virtual = cam2virtual[cid].matmul(lidar2cam)
+            points_virtual = points_lidar.tensor[:, :3].matmul(
+                lidar2virtual[:3, :3].T) + lidar2virtual[:3, 3].unsqueeze(0)
+            point_delta_height = reference_heights[cid] - points_virtual[:, 1]       
+     
+            points_img_height = torch.cat(
+                [points_img[:, :2] / points_img[:, 2:3], point_delta_height.unsqueeze(1)],
+                1)
+            points_img_height = points_img_height.matmul(
+                post_rots[cid].T) + post_trans[cid:cid + 1, :]
+            height_map = self.points2heightmap(points_img_height, imgs.shape[2],
+                                             imgs.shape[3])
+            height_map_list.append(height_map)
+            
         depth_map = torch.stack(depth_map_list)
+        height_map = torch.stack(height_map_list)
+        
         results['gt_depth'] = depth_map
+        results['gt_height'] = height_map
+        
         return results
 
 

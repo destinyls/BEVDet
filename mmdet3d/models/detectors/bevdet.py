@@ -60,9 +60,9 @@ class BEVDet(CenterPoint):
 
     def extract_feat(self, points, img, img_metas, **kwargs):
         """Extract features from images and points."""
-        img_feats, depth = self.extract_img_feat(img, img_metas, **kwargs)
+        img_feats, depth, height = self.extract_img_feat(img, img_metas, **kwargs)
         pts_feats = None
-        return (img_feats, pts_feats, depth)
+        return (img_feats, pts_feats, depth, height)
 
     def forward_train(self,
                       points=None,
@@ -158,7 +158,7 @@ class BEVDet(CenterPoint):
                     rescale=False,
                     **kwargs):
         """Test function without augmentaiton."""
-        img_feats, _, _ = self.extract_feat(
+        img_feats, _, _, _ = self.extract_feat(
             points, img=img, img_metas=img_metas, **kwargs)
         bbox_list = [dict() for _ in range(len(img_metas))]
         bbox_pts = self.simple_test_pts(img_feats, img_metas, rescale=rescale)
@@ -334,11 +334,11 @@ class BEVDet4D(BEVDet):
     def prepare_bev_feat(self, img, rot, tran, intrin, post_rot, post_tran, sensor2virtual, reference_height,
                          bda, mlp_input):
         x = self.image_encoder(img)
-        bev_feat, depth = self.img_view_transformer(
+        bev_feat, depth, height = self.img_view_transformer(
             [x, rot, tran, intrin, post_rot, post_tran, sensor2virtual, reference_height, bda, mlp_input])
         if self.pre_process:
             bev_feat = self.pre_process_net(bev_feat)[0]
-        return bev_feat, depth
+        return bev_feat, depth, height
 
     def extract_img_feat_sequential(self, inputs, feat_prev):
         imgs, rots_curr, trans_curr, intrins = inputs[:4]
@@ -401,7 +401,7 @@ class BEVDet4D(BEVDet):
             self.prepare_inputs(img)
         """Extract features of images."""
         bev_feat_list = []
-        depth_list = []
+        depth_list, height_list = [], []
         key_frame = True  # back propagation for key frame only
         for img, rot, tran, intrin, post_rot, post_tran, sensor2virtual, reference_height in zip(
                 imgs, rots, trans, intrins, post_rots, post_trans, sensor2virtuals, reference_heights):
@@ -413,15 +413,16 @@ class BEVDet4D(BEVDet):
                 inputs_curr = (img, rot, tran, intrin, post_rot,
                                post_tran, sensor2virtual, reference_height, bda, mlp_input)
                 if key_frame:
-                    bev_feat, depth = self.prepare_bev_feat(*inputs_curr)
+                    bev_feat, depth, height = self.prepare_bev_feat(*inputs_curr)
                 else:
                     with torch.no_grad():
-                        bev_feat, depth = self.prepare_bev_feat(*inputs_curr)
+                        bev_feat, depth, height = self.prepare_bev_feat(*inputs_curr)
             else:
                 bev_feat = torch.zeros_like(bev_feat_list[0])
                 depth = None
             bev_feat_list.append(bev_feat)
             depth_list.append(depth)
+            height_list.append(height)
             key_frame = False
         if pred_prev:
             assert self.align_after_view_transfromation
@@ -445,7 +446,7 @@ class BEVDet4D(BEVDet):
                                        bda)
         bev_feat = torch.cat(bev_feat_list, dim=1)
         x = self.bev_encoder(bev_feat)
-        return [x], depth_list[0]
+        return [x], depth_list[0], height_list[0]
 
 @DETECTORS.register_module()
 class BEVDepth(BEVDet):
@@ -550,18 +551,25 @@ class BEVDepth4D(BEVDet4D):
         Returns:
             dict: Losses of different branches.
         """
-        img_feats, pts_feats, depth = self.extract_feat(
+        img_feats, pts_feats, depth, height = self.extract_feat(
             points, img=img_inputs, img_metas=img_metas, **kwargs)
-        gt_depth = kwargs['gt_depth']
         losses_pts = self.forward_pts_train(img_feats, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,
                                             gt_bboxes_ignore)
-
-        if self.use_height in [0, 2]:
+        if self.use_height in [0]:
+            gt_depth = kwargs['gt_depth']
             loss_depth = self.img_view_transformer.get_depth_loss(gt_depth, depth)
             losses = dict(loss_depth=loss_depth)
             losses.update(losses_pts)
-        else:
-            losses = losses_pts
-
+        elif self.use_height in [1]:
+            gt_height = kwargs['gt_height']
+            loss_height = self.img_view_transformer.get_height_loss(gt_height, height)
+            losses = dict(loss_height=loss_height)
+            losses.update(losses_pts)
+        elif self.use_height in [2]:
+            gt_depth, gt_height = kwargs['gt_depth'], kwargs['gt_height']
+            loss_depth = self.img_view_transformer.get_depth_loss(gt_depth, depth)
+            loss_height = self.img_view_transformer.get_height_loss(gt_height, height)
+            losses = dict(loss_depth=loss_depth, loss_height=loss_height)
+            losses.update(losses_pts)
         return losses
