@@ -260,8 +260,8 @@ def main():
             ]:
                 eval_kwargs.pop(key, None)
             eval_kwargs.update(dict(metric=args.eval, **kwargs))
+            eval_kwargs.update(dict(checkpoint=args.checkpoint))
             print(dataset.evaluate(outputs, **eval_kwargs))
-
 
 if __name__ == '__main__':
     main()

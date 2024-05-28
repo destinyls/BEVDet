@@ -2,6 +2,7 @@
 import tempfile
 from os import path as osp
 
+import os
 import mmcv
 import numpy as np
 import pyquaternion
@@ -13,6 +14,7 @@ from .builder import DATASETS
 from .custom_3d import Custom3DDataset
 from .pipelines import Compose
 
+from tools.v2x.evaluation.result2kitti import kitti_evaluation, result2kitti
 
 @DATASETS.register_module()
 class NuScenesDataset(Custom3DDataset):
@@ -351,6 +353,7 @@ class NuScenesDataset(Custom3DDataset):
         mapped_class_names = self.CLASSES
 
         print('Start to convert detection format...')
+        
         for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
             boxes = det['boxes_3d'].tensor.numpy()
             scores = det['scores_3d'].numpy()
@@ -421,6 +424,57 @@ class NuScenesDataset(Custom3DDataset):
         print('Results writes to', res_path)
         mmcv.dump(nusc_submissions, res_path)
         return res_path
+    
+    def _format_bbox_dair(self, results, jsonfile_prefix=None):
+        """Convert the results to the standard format.
+
+        Args:
+            results (list[dict]): Testing results of the dataset.
+            jsonfile_prefix (str): The prefix of the output jsonfile.
+                You can specify the output directory/filename by
+                modifying the jsonfile_prefix. Default: None.
+
+        Returns:
+            str: Path of the output json file.
+        """
+        nusc_annos = {}
+        mapped_class_names = self.CLASSES
+        
+        print('Start to convert detection format...')
+        for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
+            annos = []
+            sample_token = self.data_infos[sample_id]['token']
+            
+            box3d = det['boxes_3d']
+            scores = det['scores_3d'].numpy()
+            labels = det['labels_3d'].numpy()
+
+            box_gravity_center = box3d.gravity_center.numpy()
+            box_dims = box3d.dims.numpy()
+            box_yaw = box3d.yaw.numpy()
+            # box_yaw = -box_yaw - np.pi / 2
+
+            for i in range(len(box3d)):
+                name = mapped_class_names[labels[i]]
+                nusc_anno = dict(
+                    sample_token=sample_token,
+                    translation=box_gravity_center[i],
+                    size=box_dims[i],
+                    rot_y=box_yaw[i],
+                    detection_name=name,
+                    detection_score=scores[i])
+                annos.append(nusc_anno)
+            nusc_annos[sample_token] = annos
+        nusc_submissions = {
+            'meta': self.modality,
+            'results': nusc_annos,
+        }
+
+        mmcv.mkdir_or_exist(jsonfile_prefix)
+        res_path = osp.join(jsonfile_prefix, 'results_dair.json')
+        print('Results writes to', res_path)
+        mmcv.dump(nusc_submissions, res_path)
+        return res_path
 
     def _evaluate_single(self,
                          result_path,
@@ -480,7 +534,7 @@ class NuScenesDataset(Custom3DDataset):
         detail['{}/mAP'.format(metric_prefix)] = metrics['mean_ap']
         return detail
 
-    def format_results(self, results, jsonfile_prefix=None):
+    def format_results(self, results, jsonfile_prefix=None, checkpoint=None):
         """Format the results to json (standard format for COCO evaluation).
 
         Args:
@@ -512,8 +566,10 @@ class NuScenesDataset(Custom3DDataset):
         #     dict('boxes_3d': ..., 'scores_3d': ..., 'labels_3d': ...))
         # this is a workaround to enable evaluation of both formats on nuScenes
         # refer to https://github.com/open-mmlab/mmdetection3d/issues/449
+        
+        _format_bbox = self._format_bbox_dair if "dair" in checkpoint else self._format_bbox 
         if not ('pts_bbox' in results[0] or 'img_bbox' in results[0]):
-            result_files = self._format_bbox(results, jsonfile_prefix)
+            result_files = _format_bbox(results, jsonfile_prefix)
         else:
             # should take the inner dict out of 'pts_bbox' or 'img_bbox' dict
             result_files = dict()
@@ -522,7 +578,7 @@ class NuScenesDataset(Custom3DDataset):
                 results_ = [out[name] for out in results]
                 tmp_file_ = osp.join(jsonfile_prefix, name)
                 result_files.update(
-                    {name: self._format_bbox(results_, tmp_file_)})
+                    {name: _format_bbox(results_, tmp_file_)})
         return result_files, tmp_dir
 
     def evaluate(self,
@@ -533,7 +589,8 @@ class NuScenesDataset(Custom3DDataset):
                  result_names=['pts_bbox'],
                  show=False,
                  out_dir=None,
-                 pipeline=None):
+                 pipeline=None,
+                 checkpoint=None):
         """Evaluation in nuScenes protocol.
 
         Args:
@@ -555,16 +612,23 @@ class NuScenesDataset(Custom3DDataset):
         Returns:
             dict[str, float]: Results of each evaluation metric.
         """
-        result_files, tmp_dir = self.format_results(results, jsonfile_prefix)
-
-        if isinstance(result_files, dict):
-            results_dict = dict()
-            for name in result_names:
-                print('Evaluating bboxes of {}'.format(name))
-                ret_dict = self._evaluate_single(result_files[name])
-            results_dict.update(ret_dict)
-        elif isinstance(result_files, str):
-            results_dict = self._evaluate_single(result_files)
+        result_files, tmp_dir = self.format_results(results, jsonfile_prefix, checkpoint)
+        
+        if 'dair' in checkpoint:
+            results_path, dair_root = "work_dirs", "data/dair-v2x"
+            result_files = result_files["pts_bbox"]
+            gt_label_path = os.path.join("data/dair-v2x-i-kitti", "training", "label_2")            
+            pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
+            _, results_dict = kitti_evaluation(pred_label_path, gt_label_path)    
+        else:
+            if isinstance(result_files, dict):
+                results_dict = dict()
+                for name in result_names:
+                    print('Evaluating bboxes of {}'.format(name))
+                    ret_dict = self._evaluate_single(result_files[name])
+                results_dict.update(ret_dict)
+            elif isinstance(result_files, str):
+                results_dict = self._evaluate_single(result_files)
 
         if tmp_dir is not None:
             tmp_dir.cleanup()
